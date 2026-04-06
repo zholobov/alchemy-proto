@@ -4,6 +4,7 @@ extends Node2D
 var receptacle: Receptacle
 var perf_monitor: PerfMonitor
 var game_log: GameLog
+var mediator: Mediator
 
 var _selected_substance_id: int = 1
 var _selected_substance_name: String = ""
@@ -53,6 +54,12 @@ func _ready() -> void:
 	debug_layer.add_child(_substance_label)
 	_update_substance_label()
 
+	receptacle.setup_rigid_bodies()
+
+	# Create mediator.
+	mediator = Mediator.new()
+	mediator.setup(receptacle.grid, receptacle.fluid, game_log)
+
 	game_log.log_event("Alchemy Prototype started", Color.CYAN)
 	game_log.log_event("Click to spawn particles. Keys 1-9 to select substance.", Color.GREEN)
 	game_log.log_event("F2 = toggle log, F3 = toggle perf, F4 = perf file logging", Color.GREEN)
@@ -93,24 +100,47 @@ func _process(delta: float) -> void:
 	receptacle.grid.update()
 	perf_monitor.end_timing("Particle Grid")
 
+	perf_monitor.begin_timing("Fluid Sim")
+	receptacle.fluid.update(delta)
+	perf_monitor.end_timing("Fluid Sim")
+
+	perf_monitor.begin_timing("Mediator")
+	mediator.update()
+	perf_monitor.end_timing("Mediator")
+
 	# --- Rendering ---
 	perf_monitor.begin_timing("Render")
 	receptacle.renderer.render()
 	perf_monitor.end_timing("Render")
 
-	# --- Update particle count ---
-	perf_monitor.update_particle_count(receptacle.grid.count_particles())
+	# --- Update counts ---
+	perf_monitor.update_particle_count(
+		receptacle.grid.count_particles() + receptacle.fluid.count_fluid_cells()
+	)
 
 
 func _spawn_at_mouse() -> void:
 	var mouse_pos := get_global_mouse_position()
 	var grid_pos := receptacle.screen_to_grid(mouse_pos)
+	var substance := SubstanceRegistry.get_substance(_selected_substance_id)
+	if not substance:
+		return
 
-	# Spawn in a small radius for a brush effect.
-	for dy in range(-SPAWN_RADIUS, SPAWN_RADIUS + 1):
-		for dx in range(-SPAWN_RADIUS, SPAWN_RADIUS + 1):
-			if dx * dx + dy * dy <= SPAWN_RADIUS * SPAWN_RADIUS:
-				receptacle.grid.spawn_particle(grid_pos.x + dx, grid_pos.y + dy, _selected_substance_id)
+	match substance.phase:
+		SubstanceDef.Phase.LIQUID:
+			for dy in range(-SPAWN_RADIUS, SPAWN_RADIUS + 1):
+				for dx in range(-SPAWN_RADIUS, SPAWN_RADIUS + 1):
+					if dx * dx + dy * dy <= SPAWN_RADIUS * SPAWN_RADIUS:
+						receptacle.fluid.spawn_fluid(grid_pos.x + dx, grid_pos.y + dy, _selected_substance_id)
+		SubstanceDef.Phase.SOLID:
+			if _spawn_timer == SPAWN_INTERVAL:
+				receptacle.rigid_body_mgr.spawn_object(_selected_substance_id, mouse_pos)
+				_spawn_timer = 0.5
+		_:
+			for dy in range(-SPAWN_RADIUS, SPAWN_RADIUS + 1):
+				for dx in range(-SPAWN_RADIUS, SPAWN_RADIUS + 1):
+					if dx * dx + dy * dy <= SPAWN_RADIUS * SPAWN_RADIUS:
+						receptacle.grid.spawn_particle(grid_pos.x + dx, grid_pos.y + dy, _selected_substance_id)
 
 
 func _update_substance_label() -> void:
@@ -121,18 +151,37 @@ func _update_substance_label() -> void:
 
 
 func _clear_receptacle() -> void:
+	# Clear particle grid.
 	for i in range(receptacle.grid.cells.size()):
 		receptacle.grid.cells[i] = 0
 		receptacle.grid.temperatures[i] = 20.0
 		receptacle.grid.charges[i] = 0.0
+	# Clear fluid.
+	receptacle.fluid.markers.fill(0)
+	receptacle.fluid.u.fill(0.0)
+	receptacle.fluid.v.fill(0.0)
+	receptacle.fluid.pressure.fill(0.0)
+	# Clear rigid bodies.
+	for body in receptacle.rigid_body_mgr._bodies.duplicate():
+		body.queue_free()
+	receptacle.rigid_body_mgr._bodies.clear()
 	game_log.log_event("Receptacle cleared", Color.YELLOW)
 
 
 func _flood_fill() -> void:
-	## Fill the entire receptacle with selected substance for stress testing.
+	var substance := SubstanceRegistry.get_substance(_selected_substance_id)
+	if not substance:
+		return
+	var is_liquid := substance.phase == SubstanceDef.Phase.LIQUID
 	var count := 0
 	for i in range(receptacle.grid.cells.size()):
-		if receptacle.grid.boundary[i] == 1 and receptacle.grid.cells[i] == 0:
-			receptacle.grid.cells[i] = _selected_substance_id
-			count += 1
+		if receptacle.grid.boundary[i] == 1:
+			if is_liquid:
+				if receptacle.fluid.markers[i] == 0 and receptacle.grid.cells[i] == 0:
+					receptacle.fluid.markers[i] = _selected_substance_id
+					count += 1
+			else:
+				if receptacle.grid.cells[i] == 0 and receptacle.fluid.markers[i] == 0:
+					receptacle.grid.cells[i] = _selected_substance_id
+					count += 1
 	game_log.log_event("Flood filled %d cells with %s" % [count, _selected_substance_name], Color.ORANGE)

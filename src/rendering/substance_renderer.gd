@@ -5,6 +5,7 @@ extends Sprite2D
 
 var grid: ParticleGrid
 var cell_size: int = 4  ## Screen pixels per grid cell.
+var fluid: FluidSim
 var _image: Image
 var _texture: ImageTexture
 var _pixel_data: PackedByteArray
@@ -13,9 +14,10 @@ var _pixel_data: PackedByteArray
 var _color_cache: PackedColorArray
 
 
-func setup(p_grid: ParticleGrid, p_cell_size: int = 4) -> void:
+func setup(p_grid: ParticleGrid, p_cell_size: int = 4, p_fluid: FluidSim = null) -> void:
 	grid = p_grid
 	cell_size = p_cell_size
+	fluid = p_fluid
 
 	_image = Image.create(grid.width, grid.height, false, Image.FORMAT_RGBA8)
 	_texture = ImageTexture.create_from_image(_image)
@@ -54,6 +56,7 @@ func render() -> void:
 	for i in range(size):
 		var substance_id := grid.cells[i]
 		var color: Color
+
 		if substance_id == 0:
 			color = Color.TRANSPARENT
 		elif substance_id < _color_cache.size():
@@ -61,7 +64,20 @@ func render() -> void:
 		else:
 			color = Color.MAGENTA
 
-		# Boundary cells that are walls render as dark gray.
+		# Blend fluid on top if present.
+		if fluid and fluid.markers[i] != 0:
+			var fluid_id := fluid.markers[i]
+			var fluid_color: Color
+			if fluid_id < _color_cache.size():
+				fluid_color = _color_cache[fluid_id]
+			else:
+				fluid_color = Color.MAGENTA
+			if color.a > 0:
+				color = color.lerp(fluid_color, fluid_color.a)
+			else:
+				color = fluid_color
+
+		# Boundary walls.
 		if grid.boundary[i] == 0:
 			color = Color(0.15, 0.13, 0.12, 1.0)
 

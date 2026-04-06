@@ -15,6 +15,8 @@ var wall_conductivity: float = 0.05
 
 var grid: ParticleGrid
 var renderer: SubstanceRenderer
+var fluid: FluidSim
+var rigid_body_mgr: RigidBodyMgr
 
 
 func _ready() -> void:
@@ -28,10 +30,54 @@ func _ready() -> void:
 	var ry := GRID_HEIGHT - cy - 4  # Vertical radius to bottom.
 	grid.set_boundary_oval(cx, cy, rx, ry)
 
+	# Create fluid simulation sharing the same boundary.
+	fluid = FluidSim.new(GRID_WIDTH, GRID_HEIGHT)
+	fluid.boundary = grid.boundary
+
 	# Create and set up the renderer as a child.
 	renderer = SubstanceRenderer.new()
-	renderer.setup(grid, CELL_SIZE)
+	renderer.setup(grid, CELL_SIZE, fluid)
 	add_child(renderer)
+
+	# Create rigid body manager.
+	rigid_body_mgr = RigidBodyMgr.new()
+	add_child(rigid_body_mgr)
+
+	# Create static collision walls for rigid bodies.
+	var walls := StaticBody2D.new()
+	add_child(walls)
+
+	var w_px := float(GRID_WIDTH * CELL_SIZE)
+	var h_px := float(GRID_HEIGHT * CELL_SIZE)
+	var wall_thick := 10.0
+
+	# Left wall.
+	var left_col := CollisionShape2D.new()
+	var left_shape := RectangleShape2D.new()
+	left_shape.size = Vector2(wall_thick, h_px)
+	left_col.shape = left_shape
+	left_col.position = Vector2(-wall_thick / 2.0, h_px / 2.0)
+	walls.add_child(left_col)
+
+	# Right wall.
+	var right_col := CollisionShape2D.new()
+	var right_shape := RectangleShape2D.new()
+	right_shape.size = Vector2(wall_thick, h_px)
+	right_col.shape = right_shape
+	right_col.position = Vector2(w_px + wall_thick / 2.0, h_px / 2.0)
+	walls.add_child(right_col)
+
+	# Bottom.
+	var bottom_col := CollisionShape2D.new()
+	var bottom_shape := RectangleShape2D.new()
+	bottom_shape.size = Vector2(w_px, wall_thick)
+	bottom_col.shape = bottom_shape
+	bottom_col.position = Vector2(w_px / 2.0, h_px + wall_thick / 2.0)
+	walls.add_child(bottom_col)
+
+
+func setup_rigid_bodies() -> void:
+	rigid_body_mgr.setup(grid, fluid, global_position, CELL_SIZE)
 
 
 func get_screen_size() -> Vector2:
