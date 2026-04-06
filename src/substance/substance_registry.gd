@@ -2,7 +2,7 @@ extends Node
 ## Loads and indexes all substance definitions at startup.
 ## Autoloaded as SubstanceRegistry.
 
-var substances: Array[Resource] = []
+var substances: Array[SubstanceDef] = []
 var name_to_id: Dictionary = {}
 
 
@@ -21,7 +21,7 @@ func _load_substances() -> void:
 	var filename := dir.get_next()
 	while filename != "":
 		if filename.ends_with(".tres"):
-			var substance := load("res://data/substances/" + filename)
+			var substance := load("res://data/substances/" + filename) as SubstanceDef
 			if substance:
 				substances.append(substance)
 				name_to_id[substance.substance_name] = substances.size() - 1
@@ -29,7 +29,7 @@ func _load_substances() -> void:
 	print("Loaded %d substances" % (substances.size() - 1))
 
 
-func get_substance(id: int) -> Resource:
+func get_substance(id: int) -> SubstanceDef:
 	if id <= 0 or id >= substances.size():
 		return null
 	return substances[id]

@@ -1,0 +1,29 @@
+[gd_resource type="Resource" script_class="SubstanceDef" load_steps=2 format=3]
+
+[ext_resource type="Script" path="res://src/substance/substance_def.gd" id="1"]
+
+[resource]
+script = ExtResource("1")
+substance_name = "Sulfur"
+phase = 1
+density = 2.07
+viscosity = 1.0
+melting_point = 115.0
+boiling_point = 445.0
+flash_point = 232.0
+conductivity_thermal = 0.2
+flammability = 0.9
+burn_rate = 0.7
+energy_density = 0.8
+burn_products = [{"substance": "Steam", "ratio": 0.4}, {"substance": "Flammable Gas", "ratio": 0.6}]
+acidity = 5.0
+oxidizer_strength = 0.0
+reducer_strength = 0.3
+volatility = 0.3
+conductivity_electric = 0.0
+magnetic_permeability = 0.0
+base_color = Color(0.9, 0.85, 0.2, 1)
+opacity = 1.0
+luminosity = 0.0
+luminosity_color = Color(1, 1, 1, 1)
+glow_intensity = 0.0

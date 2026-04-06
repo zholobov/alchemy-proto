@@ -1,0 +1,29 @@
+[gd_resource type="Resource" script_class="SubstanceDef" load_steps=2 format=3]
+
+[ext_resource type="Script" path="res://src/substance/substance_def.gd" id="1"]
+
+[resource]
+script = ExtResource("1")
+substance_name = "Flammable Gas"
+phase = 3
+density = 0.001
+viscosity = 0.05
+melting_point = -200.0
+boiling_point = -161.0
+flash_point = 50.0
+conductivity_thermal = 0.03
+flammability = 1.0
+burn_rate = 1.0
+energy_density = 0.9
+burn_products = [{"substance": "Steam", "ratio": 1.0}]
+acidity = 7.0
+oxidizer_strength = 0.0
+reducer_strength = 0.5
+volatility = 1.0
+conductivity_electric = 0.0
+magnetic_permeability = 0.0
+base_color = Color(0.6, 0.5, 0.2, 0.2)
+opacity = 0.2
+luminosity = 0.0
+luminosity_color = Color(1, 1, 1, 1)
+glow_intensity = 0.0

@@ -1,0 +1,29 @@
+[gd_resource type="Resource" script_class="SubstanceDef" load_steps=2 format=3]
+
+[ext_resource type="Script" path="res://src/substance/substance_def.gd" id="1"]
+
+[resource]
+script = ExtResource("1")
+substance_name = "Acid"
+phase = 2
+density = 1.4
+viscosity = 0.4
+melting_point = -35.0
+boiling_point = 337.0
+flash_point = -1.0
+conductivity_thermal = 0.5
+flammability = 0.0
+burn_rate = 0.0
+energy_density = 0.0
+burn_products = []
+acidity = 1.0
+oxidizer_strength = 0.7
+reducer_strength = 0.0
+volatility = 0.4
+conductivity_electric = 0.6
+magnetic_permeability = 0.0
+base_color = Color(0.4, 0.9, 0.2, 0.75)
+opacity = 0.75
+luminosity = 0.1
+luminosity_color = Color(0.4, 1.0, 0.2, 1)
+glow_intensity = 0.2
