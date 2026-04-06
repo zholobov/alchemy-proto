@@ -14,10 +14,18 @@ var buf_boundary: RID
 var buf_temperatures: RID
 var buf_substance_table: RID
 
-# Shader and pipeline RIDs
+# Shader and pipeline RIDs — particles
 var shader_particle: RID
 var pipeline_particle: RID
 var uniform_set_particle: RID
+
+# Shader and pipeline RIDs — fields
+var shader_fields: RID
+var pipeline_fields: RID
+var uniform_set_fields: RID
+
+# Fields ping-pong buffer
+var buf_temps_out: RID
 
 # Dispatch dimensions
 var groups_x: int
@@ -59,6 +67,7 @@ func setup(w: int, h: int, boundary_mask: PackedByteArray) -> void:
 	_upload_substance_table()
 	_compile_shaders()
 	_create_particle_pipeline()
+	_create_fields_pipeline()
 
 	print("GPU simulation initialized: %dx%d grid, dispatch %dx%d" % [width, height, groups_margolus_x, groups_margolus_y])
 
@@ -86,6 +95,12 @@ func _create_buffers(boundary_mask: PackedByteArray) -> void:
 	temps_data.resize(cell_count)
 	temps_data.fill(20.0)
 	buf_temperatures = rd.storage_buffer_create(cell_count * 4, temps_data.to_byte_array())
+
+	# Temperature output ping-pong buffer
+	var temps_out := PackedFloat32Array()
+	temps_out.resize(cell_count)
+	temps_out.fill(20.0)
+	buf_temps_out = rd.storage_buffer_create(cell_count * 4, temps_out.to_byte_array())
 
 	# Substance lookup table
 	var table_size := MAX_SUBSTANCES * SUBSTANCE_STRIDE * 4
@@ -127,6 +142,15 @@ func _compile_shaders() -> void:
 	if not shader_particle.is_valid():
 		push_error("Failed to compile particle_update shader")
 
+	var fields_file := load("res://src/shaders/fields_update.glsl") as RDShaderFile
+	if not fields_file:
+		push_error("Failed to load fields_update.glsl")
+		return
+	var fields_spirv := fields_file.get_spirv()
+	shader_fields = rd.shader_create_from_spirv(fields_spirv)
+	if not shader_fields.is_valid():
+		push_error("Failed to compile fields_update shader")
+
 
 func _create_particle_pipeline() -> void:
 	pipeline_particle = rd.compute_pipeline_create(shader_particle)
@@ -166,6 +190,51 @@ func _create_particle_pipeline() -> void:
 	uniform_set_particle = rd.uniform_set_create(uniforms, shader_particle, 0)
 
 
+func _create_fields_pipeline() -> void:
+	pipeline_fields = rd.compute_pipeline_create(shader_fields)
+
+	# Bindings: 0=params, 1=cells, 2=boundary, 3=temps_in, 4=temps_out, 5=substances
+	var uniforms: Array[RDUniform] = []
+
+	var u_params := RDUniform.new()
+	u_params.uniform_type = RenderingDevice.UNIFORM_TYPE_STORAGE_BUFFER
+	u_params.binding = 0
+	u_params.add_id(buf_params)
+	uniforms.append(u_params)
+
+	var u_cells := RDUniform.new()
+	u_cells.uniform_type = RenderingDevice.UNIFORM_TYPE_STORAGE_BUFFER
+	u_cells.binding = 1
+	u_cells.add_id(buf_cells)
+	uniforms.append(u_cells)
+
+	var u_boundary := RDUniform.new()
+	u_boundary.uniform_type = RenderingDevice.UNIFORM_TYPE_STORAGE_BUFFER
+	u_boundary.binding = 2
+	u_boundary.add_id(buf_boundary)
+	uniforms.append(u_boundary)
+
+	var u_temps_in := RDUniform.new()
+	u_temps_in.uniform_type = RenderingDevice.UNIFORM_TYPE_STORAGE_BUFFER
+	u_temps_in.binding = 3
+	u_temps_in.add_id(buf_temperatures)
+	uniforms.append(u_temps_in)
+
+	var u_temps_out := RDUniform.new()
+	u_temps_out.uniform_type = RenderingDevice.UNIFORM_TYPE_STORAGE_BUFFER
+	u_temps_out.binding = 4
+	u_temps_out.add_id(buf_temps_out)
+	uniforms.append(u_temps_out)
+
+	var u_substances := RDUniform.new()
+	u_substances.uniform_type = RenderingDevice.UNIFORM_TYPE_STORAGE_BUFFER
+	u_substances.binding = 5
+	u_substances.add_id(buf_substance_table)
+	uniforms.append(u_substances)
+
+	uniform_set_fields = rd.uniform_set_create(uniforms, shader_fields, 0)
+
+
 func step(delta: float) -> void:
 	## Run one simulation frame on the GPU.
 	# Dispatch particle update twice — Margolus pass 0 and pass 1
@@ -185,6 +254,19 @@ func step(delta: float) -> void:
 		rd.compute_list_end()
 		rd.submit()
 		rd.sync()
+
+	# Dispatch fields update (temperature diffusion)
+	var fields_list := rd.compute_list_begin()
+	rd.compute_list_bind_compute_pipeline(fields_list, pipeline_fields)
+	rd.compute_list_bind_uniform_set(fields_list, uniform_set_fields, 0)
+	rd.compute_list_dispatch(fields_list, groups_x, groups_y, 1)
+	rd.compute_list_end()
+	rd.submit()
+	rd.sync()
+
+	# Swap temperature ping-pong: copy output back to input
+	var temp_out_data := rd.buffer_get_data(buf_temps_out)
+	rd.buffer_update(buf_temperatures, 0, cell_count * 4, temp_out_data)
 
 	_frame_count += 1
 	_readback()
@@ -263,9 +345,13 @@ func cleanup() -> void:
 		rd.free_rid(pipeline_particle)
 		rd.free_rid(uniform_set_particle)
 		rd.free_rid(shader_particle)
+		rd.free_rid(pipeline_fields)
+		rd.free_rid(uniform_set_fields)
+		rd.free_rid(shader_fields)
 		rd.free_rid(buf_params)
 		rd.free_rid(buf_cells)
 		rd.free_rid(buf_boundary)
 		rd.free_rid(buf_temperatures)
+		rd.free_rid(buf_temps_out)
 		rd.free_rid(buf_substance_table)
 		rd.free()
