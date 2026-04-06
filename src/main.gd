@@ -13,9 +13,12 @@ var magnetic_field: MagneticField
 var sound_field: SoundField
 var field_renderer: FieldRenderer
 
+var shelf: Shelf
+var drag_drop: DragDrop
+var dispenser: Dispenser
+
 var _selected_substance_id: int = 1
 var _selected_substance_name: String = ""
-var _substance_label: Label
 
 ## Spawn rate when holding mouse button.
 const SPAWN_RADIUS := 3
@@ -53,15 +56,29 @@ func _ready() -> void:
 	game_log.position = Vector2(screen_size.x - 420, screen_size.y - 270)
 	debug_layer.add_child(game_log)
 
-	# Substance selector label.
-	_substance_label = Label.new()
-	_substance_label.position = Vector2(10, screen_size.y - 30)
-	_substance_label.add_theme_font_size_override("font_size", 16)
-	_substance_label.add_theme_color_override("font_color", Color.WHITE)
-	debug_layer.add_child(_substance_label)
-	_update_substance_label()
-
 	receptacle.setup_rigid_bodies()
+
+	# Create shelf.
+	var shelf_layer := CanvasLayer.new()
+	shelf_layer.layer = 50
+	add_child(shelf_layer)
+
+	shelf = Shelf.new()
+	shelf.anchor_right = 1.0
+	shelf_layer.add_child(shelf)
+	shelf.substance_picked.connect(_on_substance_picked)
+	shelf.reset_requested.connect(_clear_receptacle)
+
+	# Create drag-drop handler.
+	drag_drop = DragDrop.new()
+	add_child(drag_drop)
+	drag_drop.dropped.connect(_on_substance_dropped)
+	drag_drop.pouring.connect(_on_substance_pouring)
+
+	# Create dispenser.
+	dispenser = Dispenser.new()
+	dispenser.setup(receptacle.grid, receptacle.fluid, receptacle.global_position, Receptacle.CELL_SIZE)
+	add_child(dispenser)
 
 	# Create mediator.
 	mediator = Mediator.new()
@@ -113,7 +130,6 @@ func _input(event: InputEvent) -> void:
 			var index := key - KEY_1 + 1
 			if index <= SubstanceRegistry.get_count():
 				_selected_substance_id = index
-				_update_substance_label()
 				var substance := SubstanceRegistry.get_substance(index)
 				game_log.log_event("Selected: %s" % substance.substance_name, substance.base_color)
 		elif key == KEY_F4:
@@ -122,19 +138,17 @@ func _input(event: InputEvent) -> void:
 		elif key == KEY_R:
 			# Reset / clear receptacle.
 			_clear_receptacle()
+		elif key == KEY_D:
+			if dispenser.is_active:
+				dispenser.deactivate()
+			else:
+				dispenser.activate(_selected_substance_id)
 		elif key == KEY_F:
 			# Flood fill for stress testing.
 			_flood_fill()
 
 
 func _process(delta: float) -> void:
-	# --- Spawn ---
-	if Input.is_mouse_button_pressed(MOUSE_BUTTON_LEFT):
-		_spawn_timer -= delta
-		if _spawn_timer <= 0.0:
-			_spawn_timer = SPAWN_INTERVAL
-			_spawn_at_mouse()
-
 	# --- Simulation ---
 	perf_monitor.begin_timing("Particle Grid")
 	receptacle.grid.update()
@@ -194,11 +208,46 @@ func _spawn_at_mouse() -> void:
 						receptacle.grid.spawn_particle(grid_pos.x + dx, grid_pos.y + dy, _selected_substance_id)
 
 
-func _update_substance_label() -> void:
-	var substance := SubstanceRegistry.get_substance(_selected_substance_id)
+func _on_substance_picked(substance_id: int, phase: SubstanceDef.Phase) -> void:
+	if substance_id == -1:
+		# Toggle dispenser with last selected substance.
+		if dispenser.is_active:
+			dispenser.deactivate()
+		else:
+			dispenser.activate(_selected_substance_id)
+			game_log.log_event("Dispenser activated", Color.CYAN)
+		return
+
+	_selected_substance_id = substance_id
+	dispenser.deactivate()
+	drag_drop.start_drag(substance_id, phase)
+	var substance := SubstanceRegistry.get_substance(substance_id)
 	if substance:
 		_selected_substance_name = substance.substance_name
-	_substance_label.text = "Substance [%d]: %s  |  R=reset  F=flood" % [_selected_substance_id, _selected_substance_name]
+		game_log.log_event("Picked up: %s" % substance.substance_name, substance.base_color)
+
+
+func _on_substance_dropped(substance_id: int, phase: SubstanceDef.Phase, pos: Vector2) -> void:
+	if phase == SubstanceDef.Phase.SOLID:
+		receptacle.rigid_body_mgr.spawn_object(substance_id, pos)
+
+
+func _on_substance_pouring(substance_id: int, pos: Vector2) -> void:
+	var grid_pos := receptacle.screen_to_grid(pos)
+	var substance := SubstanceRegistry.get_substance(substance_id)
+	if not substance:
+		return
+
+	var radius := 2
+	for dy in range(-radius, radius + 1):
+		for dx in range(-radius, radius + 1):
+			if dx * dx + dy * dy <= radius * radius:
+				var px := grid_pos.x + dx
+				var py := grid_pos.y + dy
+				if substance.phase == SubstanceDef.Phase.LIQUID:
+					receptacle.fluid.spawn_fluid(px, py, substance_id)
+				else:
+					receptacle.grid.spawn_particle(px, py, substance_id)
 
 
 func _clear_receptacle() -> void:
