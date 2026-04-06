@@ -1,0 +1,15 @@
+# Godot
+.godot/
+*.import
+export_presets.cfg
+
+# OS
+.DS_Store
+Thumbs.db
+
+# IDE
+.vscode/
+.idea/
+
+# Superpowers brainstorming sessions
+.superpowers/

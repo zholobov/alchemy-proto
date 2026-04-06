@@ -1,0 +1,21 @@
+; Engine configuration file.
+; It's best edited using the editor UI and not directly,
+; but it can also be manually edited.
+
+config_version=5
+
+[application]
+
+config/name="Alchemy Prototype"
+run/main_scene="res://src/main.tscn"
+config/features=PackedStringArray("4.3", "Forward Plus")
+
+[autoload]
+
+SubstanceRegistry="*res://src/substance/substance_registry.gd"
+
+[display]
+
+window/size/viewport_width=1280
+window/size/viewport_height=720
+window/stretch/mode="canvas_items"
