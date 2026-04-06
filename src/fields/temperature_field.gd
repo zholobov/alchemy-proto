@@ -13,6 +13,11 @@ func update(grid: ParticleGrid, fluid: FluidSim, _delta: float) -> void:
 	if not should_update():
 		return
 
+	# Merge any heat the mediator wrote directly to grid.temperatures.
+	for i in range(mini(values.size(), grid.temperatures.size())):
+		if grid.temperatures[i] != values[i]:
+			values[i] = grid.temperatures[i]
+
 	var new_values := values.duplicate()
 
 	for y in range(height):

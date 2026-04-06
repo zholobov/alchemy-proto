@@ -8,6 +8,12 @@ var grid: ParticleGrid
 var fluid: FluidSim
 var game_log: GameLog
 
+## Field references for feeding reaction outputs into fields.
+var temperature_field: FieldBase
+var electric_field: FieldBase
+var light_field: FieldBase
+var sound_field: RefCounted  ## SoundField
+
 ## Track reaction count per frame for performance monitoring.
 var reactions_this_frame: int = 0
 
@@ -24,6 +30,7 @@ func update() -> void:
 	reactions_this_frame = 0
 	_check_particle_contacts()
 	_check_particle_fluid_contacts()
+	_check_phase_changes()
 
 
 func _check_particle_contacts() -> void:
@@ -128,6 +135,16 @@ func _apply_reaction(ax: int, ay: int, bx: int, by: int, result: ReactionRules.R
 	if result.gas_produced != "":
 		_spawn_gas(ax, ay, result.gas_produced)
 
+	# Feed light, charge, and sound outputs into fields.
+	if result.light_output > 0.0 and light_field:
+		light_field.add_value(ax, ay, result.light_output)
+
+	if result.charge_output != 0.0 and electric_field:
+		electric_field.add_value(ax, ay, result.charge_output)
+
+	if result.sound_event != "" and sound_field:
+		sound_field.trigger(result.sound_event, 1.0)
+
 	if game_log and (result.consumed_a or result.consumed_b):
 		game_log.log_event(
 			"%s + %s -> reaction" % [sub_a.substance_name, sub_b.substance_name],
@@ -182,3 +199,48 @@ func _spawn_gas(x: int, y: int, gas_name: String) -> void:
 		if grid.is_empty(x, ny):
 			grid.spawn_particle(x, ny, gas_id)
 			return
+
+
+func _check_phase_changes() -> void:
+	## Check all particles for temperature-driven phase transitions.
+	for y in range(grid.height):
+		for x in range(grid.width):
+			var i := grid.idx(x, y)
+			var substance_id := grid.cells[i]
+			if substance_id <= 0:
+				continue
+
+			var substance := SubstanceRegistry.get_substance(substance_id)
+			if not substance:
+				continue
+
+			var temp := grid.temperatures[i]
+			var change := ReactionRules.check_phase_change(substance, temp)
+			if change.is_empty():
+				continue
+
+			var new_id := SubstanceRegistry.get_id(change["target_substance"])
+			if new_id <= 0:
+				continue
+
+			var new_sub := SubstanceRegistry.get_substance(new_id)
+			if not new_sub:
+				continue
+
+			# Apply the phase change.
+			if new_sub.phase == SubstanceDef.Phase.LIQUID:
+				# Particle becomes fluid.
+				grid.clear_cell(x, y)
+				fluid.spawn_fluid(x, y, new_id)
+			elif new_sub.phase == SubstanceDef.Phase.GAS:
+				# Particle becomes gas (stays in particle grid, gas phase).
+				grid.cells[i] = new_id
+			else:
+				# Solid/powder transition.
+				grid.cells[i] = new_id
+
+			if game_log:
+				game_log.log_event(
+					"%s -> %s (phase change)" % [substance.substance_name, change["target_substance"]],
+					Color(0.5, 0.8, 1.0)
+				)

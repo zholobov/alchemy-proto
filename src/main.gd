@@ -109,6 +109,12 @@ func _ready() -> void:
 	sound_field = SoundField.new()
 	sound_field.setup(self)
 
+	# Wire field references into mediator for reaction outputs.
+	mediator.temperature_field = temperature_field
+	mediator.electric_field = electric_field
+	mediator.light_field = light_field
+	mediator.sound_field = sound_field
+
 	# Create field renderer.
 	field_renderer = FieldRenderer.new()
 	field_renderer.setup(
@@ -149,29 +155,32 @@ func _input(event: InputEvent) -> void:
 
 
 func _process(delta: float) -> void:
-	# --- Simulation ---
-	perf_monitor.begin_timing("Particle Grid")
-	receptacle.grid.update()
-	perf_monitor.end_timing("Particle Grid")
-
+	# --- Simulation (spec order: rigid bodies, fluid, particles) ---
 	perf_monitor.begin_timing("Fluid Sim")
 	receptacle.fluid.update(delta)
 	perf_monitor.end_timing("Fluid Sim")
 
-	perf_monitor.begin_timing("Mediator")
-	mediator.update()
-	perf_monitor.end_timing("Mediator")
+	perf_monitor.begin_timing("Particle Grid")
+	receptacle.grid.update()
+	perf_monitor.end_timing("Particle Grid")
 
-	# --- Fields ---
-	perf_monitor.begin_timing("Fields")
-	temperature_field.update(receptacle.grid, receptacle.fluid, delta)
-	pressure_field.update(receptacle.grid, receptacle.fluid, delta)
-	electric_field.update(receptacle.grid, receptacle.fluid, delta)
-	light_field.update(receptacle.grid, receptacle.fluid, delta)
-	magnetic_field.update(receptacle.grid, receptacle.fluid, delta)
-	magnetic_field.apply_forces(receptacle.grid)
+	# --- Mediator + Fields feedback loop (up to 3 passes) ---
+	perf_monitor.begin_timing("Mediator+Fields")
+	for _pass in range(3):
+		mediator.update()
+
+		temperature_field.update(receptacle.grid, receptacle.fluid, delta)
+		pressure_field.update(receptacle.grid, receptacle.fluid, delta)
+		electric_field.update(receptacle.grid, receptacle.fluid, delta)
+		light_field.update(receptacle.grid, receptacle.fluid, delta)
+		magnetic_field.update(receptacle.grid, receptacle.fluid, delta)
+		magnetic_field.apply_forces(receptacle.grid)
+
+		# Break early if no reactions occurred this pass (nothing to cascade).
+		if mediator.reactions_this_frame == 0:
+			break
 	sound_field.flush()
-	perf_monitor.end_timing("Fields")
+	perf_monitor.end_timing("Mediator+Fields")
 
 	# --- Rendering ---
 	perf_monitor.begin_timing("Render")
@@ -183,29 +192,6 @@ func _process(delta: float) -> void:
 		receptacle.grid.count_particles() + receptacle.fluid.count_fluid_cells()
 	)
 
-
-func _spawn_at_mouse() -> void:
-	var mouse_pos := get_global_mouse_position()
-	var grid_pos := receptacle.screen_to_grid(mouse_pos)
-	var substance := SubstanceRegistry.get_substance(_selected_substance_id)
-	if not substance:
-		return
-
-	match substance.phase:
-		SubstanceDef.Phase.LIQUID:
-			for dy in range(-SPAWN_RADIUS, SPAWN_RADIUS + 1):
-				for dx in range(-SPAWN_RADIUS, SPAWN_RADIUS + 1):
-					if dx * dx + dy * dy <= SPAWN_RADIUS * SPAWN_RADIUS:
-						receptacle.fluid.spawn_fluid(grid_pos.x + dx, grid_pos.y + dy, _selected_substance_id)
-		SubstanceDef.Phase.SOLID:
-			if _spawn_timer == SPAWN_INTERVAL:
-				receptacle.rigid_body_mgr.spawn_object(_selected_substance_id, mouse_pos)
-				_spawn_timer = 0.5
-		_:
-			for dy in range(-SPAWN_RADIUS, SPAWN_RADIUS + 1):
-				for dx in range(-SPAWN_RADIUS, SPAWN_RADIUS + 1):
-					if dx * dx + dy * dy <= SPAWN_RADIUS * SPAWN_RADIUS:
-						receptacle.grid.spawn_particle(grid_pos.x + dx, grid_pos.y + dy, _selected_substance_id)
 
 
 func _on_substance_picked(substance_id: int, phase: SubstanceDef.Phase) -> void:
