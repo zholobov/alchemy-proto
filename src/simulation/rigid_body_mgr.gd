@@ -28,7 +28,7 @@ func spawn_object(substance_id: int, screen_pos: Vector2) -> void:
 	var body := RigidBody2D.new()
 	body.mass = substance.density * 0.5
 	body.gravity_scale = 1.0
-	body.position = screen_pos
+	body.position = screen_pos - receptacle_position
 
 	var collision := CollisionShape2D.new()
 	var shape := RectangleShape2D.new()
