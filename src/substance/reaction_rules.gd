@@ -18,7 +18,7 @@ class ReactionResult:
 		return consumed_a or consumed_b or heat_output != 0.0 or gas_produced != "" or spawn_substance != ""
 
 
-static func evaluate(a: SubstanceDef, b: SubstanceDef, temp_a: float, temp_b: float) -> ReactionResult:
+static func evaluate(a: SubstanceDef, b: SubstanceDef, temp_a: float, _temp_b: float) -> ReactionResult:
 	## Check all reaction rules between two substances.
 	## a = the "active" substance, b = what it's touching.
 	var result := ReactionResult.new()

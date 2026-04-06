@@ -43,9 +43,7 @@ func _build_occupied_list() -> void:
 	_occupied_cells.clear()
 	for i in range(grid.cells.size()):
 		if grid.cells[i] != 0:
-			@warning_ignore("integer_division")
 			var x: int = i % grid.width
-			@warning_ignore("integer_division")
 			var y: int = i / grid.width
 			_occupied_cells.append(Vector2i(x, y))
 
@@ -224,7 +222,7 @@ func _apply_reaction(ax: int, ay: int, bx: int, by: int, result: ReactionRules.R
 		)
 
 
-func _apply_reaction_particle_fluid(x: int, y: int, result: ReactionRules.ReactionResult, sub_p: SubstanceDef, sub_f: SubstanceDef) -> void:
+func _apply_reaction_particle_fluid(x: int, y: int, result: ReactionRules.ReactionResult, _sub_p: SubstanceDef, _sub_f: SubstanceDef) -> void:
 	if result.consumed_a:
 		grid.clear_cell(x, y)
 	if result.consumed_b:
@@ -239,7 +237,7 @@ func _apply_reaction_particle_fluid(x: int, y: int, result: ReactionRules.Reacti
 			grid.spawn_particle(x, y, new_id)
 
 
-func _apply_reaction_mixed(px: int, py: int, fx: int, fy: int, result: ReactionRules.ReactionResult, sub_p: SubstanceDef, sub_f: SubstanceDef) -> void:
+func _apply_reaction_mixed(px: int, py: int, fx: int, fy: int, result: ReactionRules.ReactionResult, _sub_p: SubstanceDef, _sub_f: SubstanceDef) -> void:
 	if result.consumed_a:
 		grid.clear_cell(px, py)
 	if result.consumed_b:

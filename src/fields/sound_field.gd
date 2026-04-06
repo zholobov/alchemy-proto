@@ -3,11 +3,9 @@ extends RefCounted
 ## Sound system. Not a spatial field — triggers audio events.
 
 var _pending_events: Array[Dictionary] = []
-var _audio_players: Dictionary = {}
 var _parent_node: Node
 
 const MAX_SIMULTANEOUS := 5
-var _active_count := 0
 
 
 func setup(parent: Node) -> void:

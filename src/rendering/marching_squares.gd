@@ -31,13 +31,13 @@ static func extract_contour_segments(density: PackedFloat32Array, w: int, h: int
 	for y in range(h - 1):
 		for x in range(w - 1):
 			var tl := density[y * w + x]
-			var tr := density[y * w + x + 1]
+			var top_right := density[y * w + x + 1]
 			var br := density[(y + 1) * w + x + 1]
 			var bl := density[(y + 1) * w + x]
 
 			var cell_index := 0
 			if tl >= threshold: cell_index |= 8
-			if tr >= threshold: cell_index |= 4
+			if top_right >= threshold: cell_index |= 4
 			if br >= threshold: cell_index |= 2
 			if bl >= threshold: cell_index |= 1
 
@@ -45,8 +45,8 @@ static func extract_contour_segments(density: PackedFloat32Array, w: int, h: int
 				continue
 
 			var edges: Array[Vector2] = [
-				_lerp_edge(x, y, x + 1, y, tl, tr, threshold),
-				_lerp_edge(x + 1, y, x + 1, y + 1, tr, br, threshold),
+				_lerp_edge(x, y, x + 1, y, tl, top_right, threshold),
+				_lerp_edge(x + 1, y, x + 1, y + 1, top_right, br, threshold),
 				_lerp_edge(x, y + 1, x + 1, y + 1, bl, br, threshold),
 				_lerp_edge(x, y, x, y + 1, tl, bl, threshold),
 			]

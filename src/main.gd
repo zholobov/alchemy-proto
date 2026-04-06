@@ -21,10 +21,7 @@ var dispenser: Dispenser
 var _selected_substance_id: int = 1
 var _selected_substance_name: String = ""
 
-## Spawn rate when holding mouse button.
 const SPAWN_RADIUS := 3
-const SPAWN_INTERVAL := 0.01  ## Seconds between spawn bursts.
-var _spawn_timer: float = 0.0
 
 
 func _ready() -> void:
