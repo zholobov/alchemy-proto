@@ -51,28 +51,27 @@ func _ready() -> void:
 	var h_px := float(GRID_HEIGHT * CELL_SIZE)
 	var wall_thick := 10.0
 
-	# Left wall (straight portion above the oval).
-	var left_col := CollisionShape2D.new()
-	var left_shape := RectangleShape2D.new()
-	var oval_cy := h_px * 0.45
-	left_shape.size = Vector2(wall_thick, oval_cy)
-	left_col.shape = left_shape
-	left_col.position = Vector2(-wall_thick / 2.0, oval_cy / 2.0)
-	walls.add_child(left_col)
-
-	# Right wall (straight portion above the oval).
-	var right_col := CollisionShape2D.new()
-	var right_shape := RectangleShape2D.new()
-	right_shape.size = Vector2(wall_thick, oval_cy)
-	right_col.shape = right_shape
-	right_col.position = Vector2(w_px + wall_thick / 2.0, oval_cy / 2.0)
-	walls.add_child(right_col)
-
-	# Oval bottom — build a chain of segment collision shapes.
+	# Oval bottom parameters (must match _draw()).
 	var cx_px := w_px / 2.0
-	var cy_px := h_px - h_px * 0.45  # Same as _draw() uses.
+	var cy_px := h_px - h_px * 0.45
 	var rx_px := w_px / 2.0
 	var ry_px := h_px * 0.45
+
+	# Left wall — extends from top down to where the oval starts on the left side.
+	var left_col := CollisionShape2D.new()
+	var left_shape := RectangleShape2D.new()
+	left_shape.size = Vector2(wall_thick, cy_px)
+	left_col.shape = left_shape
+	left_col.position = Vector2(-wall_thick / 2.0, cy_px / 2.0)
+	walls.add_child(left_col)
+
+	# Right wall — same height, aligned to right edge.
+	var right_col := CollisionShape2D.new()
+	var right_shape := RectangleShape2D.new()
+	right_shape.size = Vector2(wall_thick, cy_px)
+	right_col.shape = right_shape
+	right_col.position = Vector2(w_px + wall_thick / 2.0, cy_px / 2.0)
+	walls.add_child(right_col)
 	var segments := 20
 	for i in range(segments):
 		var t1 := float(i) / segments
