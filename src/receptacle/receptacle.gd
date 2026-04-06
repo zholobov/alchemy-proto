@@ -14,7 +14,6 @@ var pressure_threshold: float = 100.0
 var wall_conductivity: float = 0.05
 
 var grid: ParticleGrid
-var renderer: SubstanceRenderer
 var fluid: FluidSim
 var rigid_body_mgr: RigidBodyMgr
 var gpu_sim: GpuSimulation
@@ -38,11 +37,6 @@ func _ready() -> void:
 	# Create fluid simulation sharing the same boundary.
 	fluid = FluidSim.new(GRID_WIDTH, GRID_HEIGHT)
 	fluid.boundary = grid.boundary
-
-	# Create and set up the renderer as a child.
-	renderer = SubstanceRenderer.new()
-	renderer.setup(grid, CELL_SIZE, fluid)
-	add_child(renderer)
 
 	# Create rigid body manager.
 	rigid_body_mgr = RigidBodyMgr.new()

@@ -12,6 +12,7 @@ var light_field: LightField
 var magnetic_field: MagneticField
 var sound_field: SoundField
 var field_renderer: FieldRenderer
+var renderer_manager: RendererManager
 
 var shelf: Shelf
 var drag_drop: DragDrop
@@ -40,12 +41,18 @@ func _ready() -> void:
 		(screen_size.y - rec_size.y + 80) / 2
 	)
 
+	# Create renderer manager.
+	renderer_manager = RendererManager.new()
+	renderer_manager.setup(receptacle, receptacle.grid, Receptacle.CELL_SIZE, receptacle.fluid)
+	add_child(renderer_manager)
+
 	# Debug overlay on a CanvasLayer so it's always on top.
 	var debug_layer := CanvasLayer.new()
 	debug_layer.layer = 100
 	add_child(debug_layer)
 
 	var fps := FPSOverlay.new()
+	fps.renderer_manager = renderer_manager
 	debug_layer.add_child(fps)
 
 	perf_monitor = PerfMonitor.new()
@@ -150,6 +157,9 @@ func _input(event: InputEvent) -> void:
 				dispenser.deactivate()
 			else:
 				dispenser.activate(_selected_substance_id)
+		elif key == KEY_F5:
+			renderer_manager.cycle_renderer()
+			game_log.log_event("Renderer: %s" % renderer_manager.get_current_name(), Color.CYAN)
 		elif key == KEY_F:
 			# Flood fill for stress testing.
 			_flood_fill()
@@ -176,7 +186,7 @@ func _process(delta: float) -> void:
 
 	# --- Rendering ---
 	perf_monitor.begin_timing("Render")
-	receptacle.renderer.render()
+	renderer_manager.render()
 	field_renderer.update_visuals()
 	perf_monitor.end_timing("Render")
 

@@ -2,9 +2,10 @@ class_name FPSOverlay
 extends Label
 ## Always-visible FPS counter in the top-left corner.
 
+var renderer_manager: RendererManager
+
 
 func _ready() -> void:
-	# Position in top-left.
 	position = Vector2(10, 10)
 	add_theme_font_size_override("font_size", 16)
 	add_theme_color_override("font_color", Color.YELLOW)
@@ -13,4 +14,7 @@ func _ready() -> void:
 func _process(_delta: float) -> void:
 	var fps := Engine.get_frames_per_second()
 	var frame_ms := 1000.0 / maxf(fps, 1.0)
-	text = "%d FPS (%.1f ms)" % [fps, frame_ms]
+	var renderer_name := ""
+	if renderer_manager:
+		renderer_name = " | %s" % renderer_manager.get_current_name()
+	text = "%d FPS (%.1f ms)%s" % [fps, frame_ms, renderer_name]
