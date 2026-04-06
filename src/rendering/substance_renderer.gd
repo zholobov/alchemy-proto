@@ -1,14 +1,15 @@
 class_name SubstanceRenderer
-extends Sprite2D
-## Renders the particle grid as a scaled-up pixel image.
+extends RendererBase
+## Debug pixel renderer. Renders the particle grid as a scaled-up pixel image.
 ## Each grid cell = 1 pixel in the image, scaled by cell_size on screen.
 
 var grid: ParticleGrid
-var cell_size: int = 4  ## Screen pixels per grid cell.
+var cell_size: int = 4
 var fluid: FluidSim
 var _image: Image
 var _texture: ImageTexture
 var _pixel_data: PackedByteArray
+var _sprite: Sprite2D
 
 ## Cache substance colors to avoid lookups every pixel every frame.
 var _color_cache: PackedColorArray
@@ -21,19 +22,28 @@ func setup(p_grid: ParticleGrid, p_cell_size: int = 4, p_fluid: FluidSim = null)
 
 	_image = Image.create(grid.width, grid.height, false, Image.FORMAT_RGBA8)
 	_texture = ImageTexture.create_from_image(_image)
-	texture = _texture
-	texture_filter = CanvasItem.TEXTURE_FILTER_NEAREST
 
-	# Scale sprite so each pixel covers cell_size screen pixels.
-	scale = Vector2(cell_size, cell_size)
-
-	# Anchor at top-left.
-	centered = false
+	_sprite = Sprite2D.new()
+	_sprite.texture = _texture
+	_sprite.texture_filter = CanvasItem.TEXTURE_FILTER_NEAREST
+	_sprite.scale = Vector2(cell_size, cell_size)
+	_sprite.centered = false
+	add_child(_sprite)
 
 	_pixel_data = PackedByteArray()
 	_pixel_data.resize(grid.width * grid.height * 4)
 
 	_rebuild_color_cache()
+
+
+func get_renderer_name() -> String:
+	return "Debug Pixel"
+
+
+func cleanup() -> void:
+	if _sprite:
+		_sprite.queue_free()
+		_sprite = null
 
 
 func _rebuild_color_cache() -> void:
@@ -45,7 +55,7 @@ func _rebuild_color_cache() -> void:
 		if substance:
 			_color_cache[i] = substance.base_color
 		else:
-			_color_cache[i] = Color.MAGENTA  # Error color.
+			_color_cache[i] = Color.MAGENTA
 
 
 func render() -> void:
