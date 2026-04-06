@@ -140,23 +140,14 @@ func render() -> void:
 
 
 func _blur_density(w: int, h: int) -> void:
-	## Simple box blur on density field.
-	for y in range(h):
-		for x in range(w):
-			var sum := 0.0
-			var count := 0.0
-			for dy in range(-2, 3):
-				for dx in range(-2, 3):
-					var nx := x + dx
-					var ny := y + dy
-					if nx >= 0 and nx < w and ny >= 0 and ny < h:
-						sum += float(_density_pixels[ny * w + nx]) / 255.0
-						count += 1.0
-			_blurred_pixels[y * w + x] = sum / count
-
-	# Copy blurred back to density for multi-pass
+	## Fast blur using native Image downscale+upscale (C++, not GDScript loops).
+	var img := Image.create_from_data(w, h, false, Image.FORMAT_R8, _density_pixels)
+	img.resize(maxi(w / 4, 1), maxi(h / 4, 1), Image.INTERPOLATE_BILINEAR)
+	img.resize(w, h, Image.INTERPOLATE_BILINEAR)
+	var blurred_bytes := img.get_data()
 	for i in range(w * h):
-		_density_pixels[i] = int(clampf(_blurred_pixels[i], 0.0, 1.0) * 255.0)
+		_blurred_pixels[i] = float(blurred_bytes[i]) / 255.0
+		_density_pixels[i] = blurred_bytes[i]
 
 
 func _smoothstep(edge0: float, edge1: float, x: float) -> float:
