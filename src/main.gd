@@ -5,6 +5,13 @@ var receptacle: Receptacle
 var perf_monitor: PerfMonitor
 var game_log: GameLog
 var mediator: Mediator
+var temperature_field: TemperatureField
+var pressure_field: PressureField
+var electric_field: ElectricField
+var light_field: LightField
+var magnetic_field: MagneticField
+var sound_field: SoundField
+var field_renderer: FieldRenderer
 
 var _selected_substance_id: int = 1
 var _selected_substance_name: String = ""
@@ -60,6 +67,39 @@ func _ready() -> void:
 	mediator = Mediator.new()
 	mediator.setup(receptacle.grid, receptacle.fluid, game_log)
 
+	# Create fields — all share the same boundary.
+	var gw := Receptacle.GRID_WIDTH
+	var gh := Receptacle.GRID_HEIGHT
+	var bound := receptacle.grid.boundary
+
+	temperature_field = TemperatureField.new(gw, gh)
+	temperature_field.boundary = bound
+
+	pressure_field = PressureField.new(gw, gh)
+	pressure_field.boundary = bound
+	pressure_field.calculate_volume()
+	pressure_field.containment_failure.connect(_on_containment_failure)
+
+	electric_field = ElectricField.new(gw, gh)
+	electric_field.boundary = bound
+
+	light_field = LightField.new(gw, gh)
+	light_field.boundary = bound
+
+	magnetic_field = MagneticField.new(gw, gh)
+	magnetic_field.boundary = bound
+
+	sound_field = SoundField.new()
+	sound_field.setup(self)
+
+	# Create field renderer.
+	field_renderer = FieldRenderer.new()
+	field_renderer.setup(
+		receptacle.grid, Receptacle.CELL_SIZE,
+		temperature_field, light_field, electric_field, pressure_field
+	)
+	receptacle.add_child(field_renderer)
+
 	game_log.log_event("Alchemy Prototype started", Color.CYAN)
 	game_log.log_event("Click to spawn particles. Keys 1-9 to select substance.", Color.GREEN)
 	game_log.log_event("F2 = toggle log, F3 = toggle perf, F4 = perf file logging", Color.GREEN)
@@ -88,14 +128,14 @@ func _input(event: InputEvent) -> void:
 
 
 func _process(delta: float) -> void:
-	# --- Spawn particles on mouse hold ---
+	# --- Spawn ---
 	if Input.is_mouse_button_pressed(MOUSE_BUTTON_LEFT):
 		_spawn_timer -= delta
 		if _spawn_timer <= 0.0:
 			_spawn_timer = SPAWN_INTERVAL
 			_spawn_at_mouse()
 
-	# --- Simulation update ---
+	# --- Simulation ---
 	perf_monitor.begin_timing("Particle Grid")
 	receptacle.grid.update()
 	perf_monitor.end_timing("Particle Grid")
@@ -108,12 +148,23 @@ func _process(delta: float) -> void:
 	mediator.update()
 	perf_monitor.end_timing("Mediator")
 
+	# --- Fields ---
+	perf_monitor.begin_timing("Fields")
+	temperature_field.update(receptacle.grid, receptacle.fluid, delta)
+	pressure_field.update(receptacle.grid, receptacle.fluid, delta)
+	electric_field.update(receptacle.grid, receptacle.fluid, delta)
+	light_field.update(receptacle.grid, receptacle.fluid, delta)
+	magnetic_field.update(receptacle.grid, receptacle.fluid, delta)
+	magnetic_field.apply_forces(receptacle.grid)
+	sound_field.flush()
+	perf_monitor.end_timing("Fields")
+
 	# --- Rendering ---
 	perf_monitor.begin_timing("Render")
 	receptacle.renderer.render()
+	field_renderer.update_visuals()
 	perf_monitor.end_timing("Render")
 
-	# --- Update counts ---
 	perf_monitor.update_particle_count(
 		receptacle.grid.count_particles() + receptacle.fluid.count_fluid_cells()
 	)
@@ -165,7 +216,14 @@ func _clear_receptacle() -> void:
 	for body in receptacle.rigid_body_mgr._bodies.duplicate():
 		body.queue_free()
 	receptacle.rigid_body_mgr._bodies.clear()
-	game_log.log_event("Receptacle cleared", Color.YELLOW)
+	# Reset fields.
+	temperature_field.values.fill(20.0)
+	pressure_field.reset()
+	electric_field.values.fill(0.0)
+	light_field.values.fill(0.0)
+	light_field.light_sources.clear()
+	magnetic_field.values.fill(0.0)
+	game_log.log_event("Receptacle cleared — all systems reset", Color.YELLOW)
 
 
 func _flood_fill() -> void:
@@ -185,3 +243,15 @@ func _flood_fill() -> void:
 					receptacle.grid.cells[i] = _selected_substance_id
 					count += 1
 	game_log.log_event("Flood filled %d cells with %s" % [count, _selected_substance_name], Color.ORANGE)
+
+
+func _on_containment_failure() -> void:
+	game_log.log_event("CONTAINMENT FAILURE — EXPLOSION!", Color.RED)
+	var grid := receptacle.grid
+	for y in range(grid.height):
+		for x in range(grid.width):
+			if grid.get_cell(x, y) > 0:
+				if randf() < 0.7:
+					grid.clear_cell(x, y)
+	receptacle.fluid.markers.fill(0)
+	pressure_field.reset()
