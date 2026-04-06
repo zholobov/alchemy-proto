@@ -110,18 +110,8 @@ func count_particles() -> int:
 
 
 func update() -> void:
-	## Run one simulation step. Bottom-to-top, alternating left-right scan.
-	_frame_count += 1
-	var scan_left := _frame_count % 2 == 0
-
-	# Bottom-to-top so falling works correctly in one pass.
-	for y in range(height - 1, -1, -1):
-		if scan_left:
-			for x in range(width):
-				_update_particle(x, y)
-		else:
-			for x in range(width - 1, -1, -1):
-				_update_particle(x, y)
+	## Disabled — simulation runs on GPU. This class is now a CPU mirror.
+	pass
 
 
 func _update_particle(x: int, y: int) -> void:

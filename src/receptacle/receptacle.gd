@@ -17,6 +17,7 @@ var grid: ParticleGrid
 var renderer: SubstanceRenderer
 var fluid: FluidSim
 var rigid_body_mgr: RigidBodyMgr
+var gpu_sim: GpuSimulation
 
 
 func _ready() -> void:
@@ -29,6 +30,10 @@ func _ready() -> void:
 	var rx := int(GRID_WIDTH / 2) - 4  # Horizontal radius, with wall margin.
 	var ry := GRID_HEIGHT - cy - 4  # Vertical radius to bottom.
 	grid.set_boundary_oval(cx, cy, rx, ry)
+
+	# Create GPU simulation.
+	gpu_sim = GpuSimulation.new()
+	gpu_sim.setup(GRID_WIDTH, GRID_HEIGHT, grid.boundary)
 
 	# Create fluid simulation sharing the same boundary.
 	fluid = FluidSim.new(GRID_WIDTH, GRID_HEIGHT)
@@ -121,3 +126,17 @@ func _draw() -> void:
 
 	# Rim at top.
 	draw_line(Vector2(-8, -2), Vector2(w + 8, -2), rim_color, rim_width + 4)
+
+
+func sync_from_gpu() -> void:
+	var cells_data := gpu_sim.get_cells()
+	var temps_data := gpu_sim.get_temperatures()
+	for i in range(mini(cells_data.size(), grid.cells.size())):
+		grid.cells[i] = cells_data[i]
+	for i in range(mini(temps_data.size(), grid.temperatures.size())):
+		grid.temperatures[i] = temps_data[i]
+
+
+func _exit_tree() -> void:
+	if gpu_sim:
+		gpu_sim.cleanup()

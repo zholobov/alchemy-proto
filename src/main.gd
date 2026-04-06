@@ -156,13 +156,10 @@ func _input(event: InputEvent) -> void:
 
 func _process(delta: float) -> void:
 	# --- Simulation (spec order: rigid bodies, fluid, particles) ---
-	perf_monitor.begin_timing("Fluid Sim")
-	receptacle.fluid.update(delta)
-	perf_monitor.end_timing("Fluid Sim")
-
-	perf_monitor.begin_timing("Particle Grid")
-	receptacle.grid.update()
-	perf_monitor.end_timing("Particle Grid")
+	perf_monitor.begin_timing("GPU Sim")
+	receptacle.gpu_sim.step(delta)
+	receptacle.sync_from_gpu()
+	perf_monitor.end_timing("GPU Sim")
 
 	# --- Mediator + Fields feedback loop (up to 3 passes) ---
 	perf_monitor.begin_timing("Mediator+Fields")
@@ -226,29 +223,19 @@ func _on_substance_pouring(substance_id: int, pos: Vector2) -> void:
 	if not substance:
 		return
 
+	var positions: Array[Vector2i] = []
 	var radius := 2
 	for dy in range(-radius, radius + 1):
 		for dx in range(-radius, radius + 1):
 			if dx * dx + dy * dy <= radius * radius:
-				var px := grid_pos.x + dx
-				var py := grid_pos.y + dy
-				if substance.phase == SubstanceDef.Phase.LIQUID:
-					receptacle.fluid.spawn_fluid(px, py, substance_id)
-				else:
-					receptacle.grid.spawn_particle(px, py, substance_id)
+				positions.append(Vector2i(grid_pos.x + dx, grid_pos.y + dy))
+
+	receptacle.gpu_sim.spawn_cells(positions, substance_id)
 
 
 func _clear_receptacle() -> void:
-	# Clear particle grid.
-	for i in range(receptacle.grid.cells.size()):
-		receptacle.grid.cells[i] = 0
-		receptacle.grid.temperatures[i] = 20.0
-		receptacle.grid.charges[i] = 0.0
-	# Clear fluid.
-	receptacle.fluid.markers.fill(0)
-	receptacle.fluid.u.fill(0.0)
-	receptacle.fluid.v.fill(0.0)
-	receptacle.fluid.pressure.fill(0.0)
+	receptacle.gpu_sim.clear_all()
+	receptacle.sync_from_gpu()
 	# Clear rigid bodies.
 	for body in receptacle.rigid_body_mgr._bodies.duplicate():
 		body.queue_free()
