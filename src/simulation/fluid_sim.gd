@@ -83,7 +83,9 @@ func count_fluid_cells() -> int:
 
 
 func update(delta: float) -> void:
-	## Full fluid simulation step.
+	## Full fluid simulation step. Skip if no fluid present.
+	if count_fluid_cells() == 0:
+		return
 	_apply_gravity(delta)
 	_project()
 	_advect_markers(delta)

@@ -43,8 +43,8 @@ func begin_timing(system_name: String) -> void:
 func end_timing(system_name: String) -> void:
 	if system_name not in _timings:
 		return
-	var elapsed_us := Time.get_ticks_usec() - _timings[system_name]
-	var elapsed_ms := elapsed_us / 1000.0
+	var elapsed_us: int = Time.get_ticks_usec() - int(_timings[system_name])
+	var elapsed_ms: float = elapsed_us / 1000.0
 
 	if system_name not in _labels:
 		var label := Label.new()

@@ -166,19 +166,21 @@ func _process(delta: float) -> void:
 
 	# --- Mediator + Fields feedback loop (up to 3 passes) ---
 	perf_monitor.begin_timing("Mediator+Fields")
-	for _pass in range(3):
-		mediator.update()
+	var has_substances := receptacle.grid.count_particles() > 0 or receptacle.fluid.count_fluid_cells() > 0
+	if has_substances:
+		for _pass in range(3):
+			mediator.update()
 
-		temperature_field.update(receptacle.grid, receptacle.fluid, delta)
-		pressure_field.update(receptacle.grid, receptacle.fluid, delta)
-		electric_field.update(receptacle.grid, receptacle.fluid, delta)
-		light_field.update(receptacle.grid, receptacle.fluid, delta)
-		magnetic_field.update(receptacle.grid, receptacle.fluid, delta)
-		magnetic_field.apply_forces(receptacle.grid)
+			temperature_field.update(receptacle.grid, receptacle.fluid, delta)
+			pressure_field.update(receptacle.grid, receptacle.fluid, delta)
+			electric_field.update(receptacle.grid, receptacle.fluid, delta)
+			light_field.update(receptacle.grid, receptacle.fluid, delta)
+			magnetic_field.update(receptacle.grid, receptacle.fluid, delta)
+			magnetic_field.apply_forces(receptacle.grid)
 
-		# Break early if no reactions occurred this pass (nothing to cascade).
-		if mediator.reactions_this_frame == 0:
-			break
+			# Break early if no reactions occurred this pass (nothing to cascade).
+			if mediator.reactions_this_frame == 0:
+				break
 	sound_field.flush()
 	perf_monitor.end_timing("Mediator+Fields")
 
