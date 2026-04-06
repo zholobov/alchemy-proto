@@ -60,8 +60,8 @@ func _process(delta: float) -> void:
 
 func _emit_particle(screen_pos: Vector2) -> void:
 	var local := screen_pos - _receptacle_pos
-	var gx := int(local.x) / _cell_size
-	var gy := int(local.y) / _cell_size
+	var gx: int = floori(local.x / float(_cell_size))
+	var gy: int = floori(local.y / float(_cell_size))
 
 	var sub := SubstanceRegistry.get_substance(substance_id)
 	if not sub:

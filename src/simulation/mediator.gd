@@ -44,7 +44,7 @@ func _build_occupied_list() -> void:
 	for i in range(grid.cells.size()):
 		if grid.cells[i] != 0:
 			var x: int = i % grid.width
-			var y: int = i / grid.width
+			var y: int = floori(float(i) / float(grid.width))
 			_occupied_cells.append(Vector2i(x, y))
 
 

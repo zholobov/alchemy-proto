@@ -24,9 +24,9 @@ func _ready() -> void:
 	grid = ParticleGrid.new(GRID_WIDTH, GRID_HEIGHT)
 	# Set up oval boundary for rounded bottom.
 	# Oval center is at the middle-bottom area of the grid.
-	var cx: int = GRID_WIDTH / 2
-	var cy: int = int(GRID_HEIGHT * 0.45)  # Oval starts below midpoint.
-	var rx: int = GRID_WIDTH / 2 - 4  # Horizontal radius, with wall margin.
+	var cx: int = floori(GRID_WIDTH / 2.0)
+	var cy: int = floori(GRID_HEIGHT * 0.45)  # Oval starts below midpoint.
+	var rx: int = floori(GRID_WIDTH / 2.0) - 4  # Horizontal radius, with wall margin.
 	var ry := GRID_HEIGHT - cy - 4  # Vertical radius to bottom.
 	grid.set_boundary_oval(cx, cy, rx, ry)
 
@@ -104,8 +104,8 @@ func grid_to_screen(gx: int, gy: int) -> Vector2:
 
 func screen_to_grid(screen_pos: Vector2) -> Vector2i:
 	var local := screen_pos - global_position
-	var gx: int = int(local.x) / CELL_SIZE
-	var gy: int = int(local.y) / CELL_SIZE
+	var gx: int = floori(local.x / float(CELL_SIZE))
+	var gy: int = floori(local.y / float(CELL_SIZE))
 	return Vector2i(gx, gy)
 
 
