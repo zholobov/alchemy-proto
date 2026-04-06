@@ -23,6 +23,7 @@ func setup(parent: Node2D, grid: ParticleGrid, cell_size: int, fluid: FluidSim) 
 	# Register available renderers.
 	_register(SubstanceRenderer, "Debug Pixel")
 	_register(MultiLayerRenderer, "Multi-Layer")
+	_register(DensityFieldRenderer, "Density Field")
 
 	# Activate the first renderer.
 	_activate(0)
