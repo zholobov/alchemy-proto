@@ -126,7 +126,7 @@ func update() -> void:
 
 func _update_particle(x: int, y: int) -> void:
 	var i := idx(x, y)
-	var substance_id := cells[i]
+	var substance_id: int = cells[i]
 	if substance_id == 0:
 		return
 
@@ -194,7 +194,7 @@ func _try_move(from_x: int, from_y: int, to_x: int, to_y: int, substance: Substa
 	if not is_valid(to_x, to_y):
 		return false
 
-	var target_id := cells[idx(to_x, to_y)]
+	var target_id: int = cells[idx(to_x, to_y)]
 
 	# Empty cell — just move.
 	if target_id == 0:
@@ -216,14 +216,14 @@ func _swap(x1: int, y1: int, x2: int, y2: int) -> void:
 	var i1 := idx(x1, y1)
 	var i2 := idx(x2, y2)
 	# Swap substance IDs.
-	var tmp_cell := cells[i1]
+	var tmp_cell: int = cells[i1]
 	cells[i1] = cells[i2]
 	cells[i2] = tmp_cell
 	# Swap temperatures.
-	var tmp_temp := temperatures[i1]
+	var tmp_temp: float = temperatures[i1]
 	temperatures[i1] = temperatures[i2]
 	temperatures[i2] = tmp_temp
 	# Swap charges.
-	var tmp_charge := charges[i1]
+	var tmp_charge: float = charges[i1]
 	charges[i1] = charges[i2]
 	charges[i2] = tmp_charge

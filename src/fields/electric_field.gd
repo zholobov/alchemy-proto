@@ -23,12 +23,12 @@ func update(grid: ParticleGrid, fluid: FluidSim, _delta: float) -> void:
 				continue
 
 			var i := idx(x, y)
-			var charge := values[i]
+			var charge: float = values[i]
 			if absf(charge) < 0.001:
 				continue
 
-			var substance_id := grid.cells[i]
-			var fluid_id := fluid.markers[i] if i < fluid.markers.size() else 0
+			var substance_id: int = grid.cells[i]
+			var fluid_id: int = fluid.markers[i] if i < fluid.markers.size() else 0
 			var conductivity := 0.0
 
 			if substance_id > 0:
@@ -44,7 +44,7 @@ func update(grid: ParticleGrid, fluid: FluidSim, _delta: float) -> void:
 				new_values[i] *= (1.0 - DISSIPATION_RATE)
 				continue
 
-			var neighbors := [
+			var neighbors: Array[Vector2i] = [
 				Vector2i(x + 1, y), Vector2i(x - 1, y),
 				Vector2i(x, y + 1), Vector2i(x, y - 1),
 			]
@@ -53,8 +53,8 @@ func update(grid: ParticleGrid, fluid: FluidSim, _delta: float) -> void:
 				if not is_valid(n.x, n.y):
 					continue
 				var ni := idx(n.x, n.y)
-				var n_sub_id := grid.cells[ni]
-				var n_fluid_id := fluid.markers[ni] if ni < fluid.markers.size() else 0
+				var n_sub_id: int = grid.cells[ni]
+				var n_fluid_id: int = fluid.markers[ni] if ni < fluid.markers.size() else 0
 				var n_conductivity := 0.0
 				if n_sub_id > 0:
 					var ns := SubstanceRegistry.get_substance(n_sub_id)

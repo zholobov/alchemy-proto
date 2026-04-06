@@ -26,9 +26,9 @@ func update(grid: ParticleGrid, fluid: FluidSim, _delta: float) -> void:
 				continue
 
 			var i := idx(x, y)
-			var temp := values[i]
-			var substance_id := grid.cells[i]
-			var fluid_id := fluid.markers[i] if i < fluid.markers.size() else 0
+			var temp: float = values[i]
+			var substance_id: int = grid.cells[i]
+			var fluid_id: int = fluid.markers[i] if i < fluid.markers.size() else 0
 			var has_substance := substance_id > 0 or fluid_id > 0
 
 			var conductivity := RADIATION_RATE
@@ -41,7 +41,7 @@ func update(grid: ParticleGrid, fluid: FluidSim, _delta: float) -> void:
 				if sub:
 					conductivity = sub.conductivity_thermal * CONDUCTION_RATE
 
-			var neighbors := [
+			var neighbors: Array[Vector2i] = [
 				Vector2i(x + 1, y), Vector2i(x - 1, y),
 				Vector2i(x, y + 1), Vector2i(x, y - 1),
 			]
@@ -50,7 +50,7 @@ func update(grid: ParticleGrid, fluid: FluidSim, _delta: float) -> void:
 				if not is_valid(n.x, n.y):
 					continue
 				var ni := idx(n.x, n.y)
-				var neighbor_temp := values[ni]
+				var neighbor_temp: float = values[ni]
 				var diff := neighbor_temp - temp
 				var flow := diff * conductivity
 				new_values[i] += flow * 0.25

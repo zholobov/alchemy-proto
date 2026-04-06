@@ -54,7 +54,7 @@ func _update_lights() -> void:
 
 	for i in range(_lights.size()):
 		if i < sources.size():
-			var src := sources[i]
+			var src: Dictionary = sources[i]
 			_lights[i].visible = true
 			_lights[i].position = Vector2(src["x"] * cell_size, src["y"] * cell_size)
 			_lights[i].color = src["color"]

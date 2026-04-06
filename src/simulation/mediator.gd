@@ -47,7 +47,7 @@ func _check_particle_contacts() -> void:
 			if not substance_a:
 				continue
 
-			var neighbors := [
+			var neighbors: Array[Vector2i] = [
 				Vector2i(x + 1, y), Vector2i(x - 1, y),
 				Vector2i(x, y + 1), Vector2i(x, y - 1),
 			]
@@ -63,8 +63,8 @@ func _check_particle_contacts() -> void:
 				if not substance_b:
 					continue
 
-				var temp_a := grid.temperatures[grid.idx(x, y)]
-				var temp_b := grid.temperatures[grid.idx(n.x, n.y)]
+				var temp_a: float = grid.temperatures[grid.idx(x, y)]
+				var temp_b: float = grid.temperatures[grid.idx(n.x, n.y)]
 
 				var result := ReactionRules.evaluate(substance_a, substance_b, temp_a, temp_b)
 				if result.has_reaction():
@@ -79,13 +79,13 @@ func _check_particle_fluid_contacts() -> void:
 				return
 
 			var particle_id := grid.get_cell(x, y)
-			var fluid_id := fluid.markers[grid.idx(x, y)] if grid.in_bounds(x, y) else 0
+			var fluid_id: int = fluid.markers[grid.idx(x, y)] if grid.in_bounds(x, y) else 0
 
 			if particle_id > 0 and fluid_id > 0:
 				var sub_p := SubstanceRegistry.get_substance(particle_id)
 				var sub_f := SubstanceRegistry.get_substance(fluid_id)
 				if sub_p and sub_f:
-					var temp := grid.temperatures[grid.idx(x, y)]
+					var temp: float = grid.temperatures[grid.idx(x, y)]
 					var result := ReactionRules.evaluate(sub_p, sub_f, temp, temp)
 					if result.has_reaction():
 						_apply_reaction_particle_fluid(x, y, result, sub_p, sub_f)
@@ -93,7 +93,7 @@ func _check_particle_fluid_contacts() -> void:
 						continue
 
 			if particle_id > 0:
-				var neighbors := [
+				var neighbors: Array[Vector2i] = [
 					Vector2i(x + 1, y), Vector2i(x - 1, y),
 					Vector2i(x, y + 1), Vector2i(x, y - 1),
 				]
@@ -102,13 +102,13 @@ func _check_particle_fluid_contacts() -> void:
 						return
 					if not grid.in_bounds(n.x, n.y):
 						continue
-					var adj_fluid := fluid.markers[grid.idx(n.x, n.y)]
+					var adj_fluid: int = fluid.markers[grid.idx(n.x, n.y)]
 					if adj_fluid <= 0:
 						continue
 					var sub_p := SubstanceRegistry.get_substance(particle_id)
 					var sub_f := SubstanceRegistry.get_substance(adj_fluid)
 					if sub_p and sub_f:
-						var temp := grid.temperatures[grid.idx(x, y)]
+						var temp: float = grid.temperatures[grid.idx(x, y)]
 						var result := ReactionRules.evaluate(sub_p, sub_f, temp, temp)
 						if result.has_reaction():
 							_apply_reaction_mixed(x, y, n.x, n.y, result, sub_p, sub_f)
@@ -206,7 +206,7 @@ func _check_phase_changes() -> void:
 	for y in range(grid.height):
 		for x in range(grid.width):
 			var i := grid.idx(x, y)
-			var substance_id := grid.cells[i]
+			var substance_id: int = grid.cells[i]
 			if substance_id <= 0:
 				continue
 
@@ -214,7 +214,7 @@ func _check_phase_changes() -> void:
 			if not substance:
 				continue
 
-			var temp := grid.temperatures[i]
+			var temp: float = grid.temperatures[i]
 			var change := ReactionRules.check_phase_change(substance, temp)
 			if change.is_empty():
 				continue

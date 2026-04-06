@@ -120,7 +120,7 @@ func _project() -> void:
 					continue
 
 				# Divergence at this cell.
-				var div := u[u_idx(x + 1, y)] - u[u_idx(x, y)] + v[v_idx(x, y + 1)] - v[v_idx(x, y)]
+				var div: float = u[u_idx(x + 1, y)] - u[u_idx(x, y)] + v[v_idx(x, y + 1)] - v[v_idx(x, y)]
 
 				# Pressure correction.
 				var p := -div / s_total * OVERRELAX
@@ -153,11 +153,11 @@ func _advect_markers(delta: float) -> void:
 			if not is_fluid(x, y):
 				continue
 
-			var substance_id := markers[idx(x, y)]
+			var substance_id: int = markers[idx(x, y)]
 
 			# Get velocity at cell center (average of face velocities).
-			var vx := (u[u_idx(x, y)] + u[u_idx(x + 1, y)]) * 0.5
-			var vy := (v[v_idx(x, y)] + v[v_idx(x, y + 1)]) * 0.5
+			var vx: float = (u[u_idx(x, y)] + u[u_idx(x + 1, y)]) * 0.5
+			var vy: float = (v[v_idx(x, y)] + v[v_idx(x, y + 1)]) * 0.5
 
 			# Trace back to source position.
 			var src_x := float(x) - vx * delta

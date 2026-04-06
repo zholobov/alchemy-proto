@@ -54,7 +54,7 @@ func render() -> void:
 
 	var size := grid.width * grid.height
 	for i in range(size):
-		var substance_id := grid.cells[i]
+		var substance_id: int = grid.cells[i]
 		var color: Color
 
 		if substance_id == 0:
@@ -66,7 +66,7 @@ func render() -> void:
 
 		# Blend fluid on top if present.
 		if fluid and fluid.markers[i] != 0:
-			var fluid_id := fluid.markers[i]
+			var fluid_id: int = fluid.markers[i]
 			var fluid_color: Color
 			if fluid_id < _color_cache.size():
 				fluid_color = _color_cache[fluid_id]

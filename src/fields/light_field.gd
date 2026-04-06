@@ -26,8 +26,8 @@ func update(grid: ParticleGrid, fluid: FluidSim, _delta: float) -> void:
 			if not is_valid(x, y):
 				continue
 			var i := idx(x, y)
-			var substance_id := grid.cells[i]
-			var fluid_id := fluid.markers[i] if i < fluid.markers.size() else 0
+			var substance_id: int = grid.cells[i]
+			var fluid_id: int = fluid.markers[i] if i < fluid.markers.size() else 0
 			var sub: SubstanceDef = null
 
 			if substance_id > 0:
@@ -44,13 +44,13 @@ func update(grid: ParticleGrid, fluid: FluidSim, _delta: float) -> void:
 			if sub.luminosity > 0.0:
 				intensity += sub.luminosity
 
-			var temp := grid.temperatures[i]
+			var temp: float = grid.temperatures[i]
 			if temp > GLOW_TEMP_THRESHOLD:
 				intensity += (temp - GLOW_TEMP_THRESHOLD) * TEMP_GLOW_FACTOR
 				var heat_ratio := clampf((temp - GLOW_TEMP_THRESHOLD) / 1000.0, 0.0, 1.0)
 				color = Color.RED.lerp(Color.WHITE, heat_ratio)
 
-			var charge := grid.charges[i]
+			var charge: float = grid.charges[i]
 			if absf(charge) > 0.1:
 				intensity += absf(charge) * 0.3
 				color = color.lerp(Color(0.5, 0.7, 1.0), 0.5)

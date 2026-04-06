@@ -22,7 +22,7 @@ func update(grid: ParticleGrid, _fluid: FluidSim, _delta: float) -> void:
 			if not is_valid(x, y):
 				continue
 			var i := idx(x, y)
-			var substance_id := grid.cells[i]
+			var substance_id: int = grid.cells[i]
 			if substance_id <= 0:
 				continue
 			var sub := SubstanceRegistry.get_substance(substance_id)
@@ -31,7 +31,7 @@ func update(grid: ParticleGrid, _fluid: FluidSim, _delta: float) -> void:
 
 			var strength := sub.magnetic_permeability
 
-			var charge := grid.charges[i]
+			var charge: float = grid.charges[i]
 			if absf(charge) > 0.1:
 				strength += absf(charge) * 0.5
 
@@ -64,14 +64,14 @@ func apply_forces(grid: ParticleGrid) -> void:
 
 			var best_dx := 0
 			var best_dy := 0
-			var best_val := values[idx(x, y)]
+			var best_val: float = values[idx(x, y)]
 
 			for dy in [-1, 0, 1]:
 				for dx in [-1, 0, 1]:
 					if dx == 0 and dy == 0:
 						continue
-					var nx := x + dx
-					var ny := y + dy
+					var nx: int = x + dx
+					var ny: int = y + dy
 					if is_valid(nx, ny) and values[idx(nx, ny)] > best_val:
 						if grid.get_cell(nx, ny) == 0:
 							best_val = values[idx(nx, ny)]
