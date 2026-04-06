@@ -104,7 +104,9 @@ func grid_to_screen(gx: int, gy: int) -> Vector2:
 
 func screen_to_grid(screen_pos: Vector2) -> Vector2i:
 	var local := screen_pos - global_position
-	return Vector2i(int(local.x) // CELL_SIZE, int(local.y) // CELL_SIZE)
+	var gx: int = int(local.x) / CELL_SIZE
+	var gy: int = int(local.y) / CELL_SIZE
+	return Vector2i(gx, gy)
 
 
 func _draw() -> void:

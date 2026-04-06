@@ -72,4 +72,6 @@ func dissolve_body(body: RigidBody2D) -> void:
 
 func _screen_to_grid(screen_pos: Vector2) -> Vector2i:
 	var local := screen_pos - receptacle_position
-	return Vector2i(int(local.x) // cell_size, int(local.y) // cell_size)
+	var gx: int = int(local.x) / cell_size
+	var gy: int = int(local.y) / cell_size
+	return Vector2i(gx, gy)
