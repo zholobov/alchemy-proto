@@ -26,93 +26,109 @@ func setup(p_grid: ParticleGrid, p_fluid: FluidSim, p_log: GameLog) -> void:
 	game_log = p_log
 
 
+var _occupied_cells: Array[Vector2i] = []
+
+
 func update() -> void:
 	reactions_this_frame = 0
-	_check_particle_contacts()
-	_check_particle_fluid_contacts()
-	_check_phase_changes()
+	_build_occupied_list()
+	_check_sparse_contacts()
+	_check_phase_changes_sparse()
 
 
-func _check_particle_contacts() -> void:
-	for y in range(grid.height):
-		for x in range(grid.width):
+func _build_occupied_list() -> void:
+	## Scan readback data once to find all occupied cells.
+	_occupied_cells.clear()
+	for i in range(grid.cells.size()):
+		if grid.cells[i] != 0:
+			@warning_ignore("integer_division")
+			var x: int = i % grid.width
+			@warning_ignore("integer_division")
+			var y: int = i / grid.width
+			_occupied_cells.append(Vector2i(x, y))
+
+
+func _check_sparse_contacts() -> void:
+	## Only check reactions at occupied cells and their neighbors.
+	for pos in _occupied_cells:
+		if reactions_this_frame >= MAX_REACTIONS_PER_FRAME:
+			return
+
+		var x := pos.x
+		var y := pos.y
+		var id_a := grid.get_cell(x, y)
+		if id_a <= 0:
+			continue
+
+		var substance_a := SubstanceRegistry.get_substance(id_a)
+		if not substance_a:
+			continue
+
+		var neighbors: Array[Vector2i] = [
+			Vector2i(x + 1, y), Vector2i(x - 1, y),
+			Vector2i(x, y + 1), Vector2i(x, y - 1),
+		]
+
+		for n in neighbors:
 			if reactions_this_frame >= MAX_REACTIONS_PER_FRAME:
 				return
-
-			var id_a := grid.get_cell(x, y)
-			if id_a <= 0:
+			var id_b := grid.get_cell(n.x, n.y)
+			if id_b <= 0 or id_b == id_a:
 				continue
 
-			var substance_a := SubstanceRegistry.get_substance(id_a)
-			if not substance_a:
+			var substance_b := SubstanceRegistry.get_substance(id_b)
+			if not substance_b:
 				continue
 
-			var neighbors: Array[Vector2i] = [
-				Vector2i(x + 1, y), Vector2i(x - 1, y),
-				Vector2i(x, y + 1), Vector2i(x, y - 1),
-			]
+			var temp_a: float = grid.temperatures[grid.idx(x, y)]
+			var temp_b: float = grid.temperatures[grid.idx(n.x, n.y)]
 
-			for n in neighbors:
-				if reactions_this_frame >= MAX_REACTIONS_PER_FRAME:
-					return
-				var id_b := grid.get_cell(n.x, n.y)
-				if id_b <= 0 or id_b == id_a:
-					continue
-
-				var substance_b := SubstanceRegistry.get_substance(id_b)
-				if not substance_b:
-					continue
-
-				var temp_a: float = grid.temperatures[grid.idx(x, y)]
-				var temp_b: float = grid.temperatures[grid.idx(n.x, n.y)]
-
-				var result := ReactionRules.evaluate(substance_a, substance_b, temp_a, temp_b)
-				if result.has_reaction():
-					_apply_reaction(x, y, n.x, n.y, result, substance_a, substance_b)
-					reactions_this_frame += 1
+			var result := ReactionRules.evaluate(substance_a, substance_b, temp_a, temp_b)
+			if result.has_reaction():
+				_apply_reaction(x, y, n.x, n.y, result, substance_a, substance_b)
+				reactions_this_frame += 1
 
 
-func _check_particle_fluid_contacts() -> void:
-	for y in range(grid.height):
-		for x in range(grid.width):
-			if reactions_this_frame >= MAX_REACTIONS_PER_FRAME:
-				return
+func _check_phase_changes_sparse() -> void:
+	## Only check phase changes for occupied cells.
+	for pos in _occupied_cells:
+		var x := pos.x
+		var y := pos.y
+		var i := grid.idx(x, y)
+		var substance_id: int = grid.cells[i]
+		if substance_id <= 0:
+			continue
 
-			var particle_id := grid.get_cell(x, y)
-			var fluid_id: int = fluid.markers[grid.idx(x, y)] if grid.in_bounds(x, y) else 0
+		var substance := SubstanceRegistry.get_substance(substance_id)
+		if not substance:
+			continue
 
-			if particle_id > 0 and fluid_id > 0:
-				var sub_p := SubstanceRegistry.get_substance(particle_id)
-				var sub_f := SubstanceRegistry.get_substance(fluid_id)
-				if sub_p and sub_f:
-					var temp: float = grid.temperatures[grid.idx(x, y)]
-					var result := ReactionRules.evaluate(sub_p, sub_f, temp, temp)
-					if result.has_reaction():
-						_apply_reaction_particle_fluid(x, y, result, sub_p, sub_f)
-						reactions_this_frame += 1
-						continue
+		var temp: float = grid.temperatures[i]
+		var change := ReactionRules.check_phase_change(substance, temp)
+		if change.is_empty():
+			continue
 
-			if particle_id > 0:
-				var neighbors: Array[Vector2i] = [
-					Vector2i(x + 1, y), Vector2i(x - 1, y),
-					Vector2i(x, y + 1), Vector2i(x, y - 1),
-				]
-				for n in neighbors:
-					if reactions_this_frame >= MAX_REACTIONS_PER_FRAME:
-						return
-					if not grid.in_bounds(n.x, n.y):
-						continue
-					var adj_fluid: int = fluid.markers[grid.idx(n.x, n.y)]
-					if adj_fluid <= 0:
-						continue
-					var sub_p := SubstanceRegistry.get_substance(particle_id)
-					var sub_f := SubstanceRegistry.get_substance(adj_fluid)
-					if sub_p and sub_f:
-						var temp: float = grid.temperatures[grid.idx(x, y)]
-						var result := ReactionRules.evaluate(sub_p, sub_f, temp, temp)
-						if result.has_reaction():
-							_apply_reaction_mixed(x, y, n.x, n.y, result, sub_p, sub_f)
-							reactions_this_frame += 1
+		var new_id := SubstanceRegistry.get_id(change["target_substance"])
+		if new_id <= 0:
+			continue
+
+		var new_sub := SubstanceRegistry.get_substance(new_id)
+		if not new_sub:
+			continue
+
+		if new_sub.phase == SubstanceDef.Phase.LIQUID:
+			grid.clear_cell(x, y)
+			fluid.spawn_fluid(x, y, new_id)
+		elif new_sub.phase == SubstanceDef.Phase.GAS:
+			grid.cells[i] = new_id
+		else:
+			grid.cells[i] = new_id
+
+		if game_log:
+			game_log.log_event(
+				"%s -> %s (phase change)" % [substance.substance_name, change["target_substance"]],
+				Color(0.5, 0.8, 1.0)
+			)
 
 
 func _apply_reaction(ax: int, ay: int, bx: int, by: int, result: ReactionRules.ReactionResult, sub_a: SubstanceDef, sub_b: SubstanceDef) -> void:
@@ -201,46 +217,3 @@ func _spawn_gas(x: int, y: int, gas_name: String) -> void:
 			return
 
 
-func _check_phase_changes() -> void:
-	## Check all particles for temperature-driven phase transitions.
-	for y in range(grid.height):
-		for x in range(grid.width):
-			var i := grid.idx(x, y)
-			var substance_id: int = grid.cells[i]
-			if substance_id <= 0:
-				continue
-
-			var substance := SubstanceRegistry.get_substance(substance_id)
-			if not substance:
-				continue
-
-			var temp: float = grid.temperatures[i]
-			var change := ReactionRules.check_phase_change(substance, temp)
-			if change.is_empty():
-				continue
-
-			var new_id := SubstanceRegistry.get_id(change["target_substance"])
-			if new_id <= 0:
-				continue
-
-			var new_sub := SubstanceRegistry.get_substance(new_id)
-			if not new_sub:
-				continue
-
-			# Apply the phase change.
-			if new_sub.phase == SubstanceDef.Phase.LIQUID:
-				# Particle becomes fluid.
-				grid.clear_cell(x, y)
-				fluid.spawn_fluid(x, y, new_id)
-			elif new_sub.phase == SubstanceDef.Phase.GAS:
-				# Particle becomes gas (stays in particle grid, gas phase).
-				grid.cells[i] = new_id
-			else:
-				# Solid/powder transition.
-				grid.cells[i] = new_id
-
-			if game_log:
-				game_log.log_event(
-					"%s -> %s (phase change)" % [substance.substance_name, change["target_substance"]],
-					Color(0.5, 0.8, 1.0)
-				)
