@@ -161,10 +161,6 @@ func _advect_markers(delta: float) -> void:
 			var vx: float = (u[u_idx(x, y)] + u[u_idx(x + 1, y)]) * 0.5
 			var vy: float = (v[v_idx(x, y)] + v[v_idx(x, y + 1)]) * 0.5
 
-			# Trace back to source position.
-			var src_x := float(x) - vx * delta
-			var src_y := float(y) - vy * delta
-
 			# Target position (where this fluid moves to).
 			var tx := int(roundf(float(x) + vx * delta))
 			var ty := int(roundf(float(y) + vy * delta))

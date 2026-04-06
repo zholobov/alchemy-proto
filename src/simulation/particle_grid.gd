@@ -12,7 +12,6 @@ var charges: PackedFloat32Array  ## Per-cell electrical charge.
 ## Boundary mask: 1 = inside receptacle, 0 = wall/outside.
 var boundary: PackedByteArray
 
-var _frame_count: int = 0
 var _rng := RandomNumberGenerator.new()
 
 
@@ -132,9 +131,7 @@ func _update_particle(x: int, y: int) -> void:
 		# LIQUID and SOLID phases are handled by other systems.
 
 
-func _update_powder(x: int, y: int, substance_id: int, substance: SubstanceDef) -> void:
-	var i := idx(x, y)
-
+func _update_powder(x: int, y: int, _substance_id: int, substance: SubstanceDef) -> void:
 	# 1. Try to fall straight down.
 	if _try_move(x, y, x, y + 1, substance):
 		return
@@ -149,9 +146,7 @@ func _update_powder(x: int, y: int, substance_id: int, substance: SubstanceDef) 
 		return
 
 
-func _update_gas(x: int, y: int, substance_id: int, substance: SubstanceDef) -> void:
-	var i := idx(x, y)
-
+func _update_gas(x: int, y: int, _substance_id: int, substance: SubstanceDef) -> void:
 	# Gases rise (try to move up) and drift sideways.
 	# 1. Try to rise straight up.
 	if _try_move(x, y, x, y - 1, substance):
