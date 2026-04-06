@@ -83,6 +83,7 @@ func _ready() -> void:
 	# Create mediator.
 	mediator = Mediator.new()
 	mediator.setup(receptacle.grid, receptacle.fluid, game_log)
+	mediator.rigid_body_mgr = receptacle.rigid_body_mgr
 
 	# Create fields — all share the same boundary.
 	var gw := Receptacle.GRID_WIDTH

@@ -7,6 +7,7 @@ extends RefCounted
 var grid: ParticleGrid
 var fluid: FluidSim
 var game_log: GameLog
+var rigid_body_mgr: RigidBodyMgr
 
 ## Field references for feeding reaction outputs into fields.
 var temperature_field: FieldBase
@@ -33,6 +34,7 @@ func update() -> void:
 	reactions_this_frame = 0
 	_build_occupied_list()
 	_check_sparse_contacts()
+	_check_rigid_body_contacts()
 	_check_phase_changes_sparse()
 
 
@@ -87,6 +89,60 @@ func _check_sparse_contacts() -> void:
 			if result.has_reaction():
 				_apply_reaction(x, y, n.x, n.y, result, substance_a, substance_b)
 				reactions_this_frame += 1
+
+
+func _check_rigid_body_contacts() -> void:
+	## Check if rigid bodies are in contact with reactive grid substances.
+	if not rigid_body_mgr:
+		return
+	for body in rigid_body_mgr._bodies.duplicate():  # duplicate() because we may remove during iteration
+		if reactions_this_frame >= MAX_REACTIONS_PER_FRAME:
+			return
+		var body_sub_id: int = body.get_meta("substance_id", 0)
+		var body_sub := SubstanceRegistry.get_substance(body_sub_id)
+		if not body_sub:
+			continue
+
+		# Get grid position of the rigid body center
+		var grid_pos := rigid_body_mgr._screen_to_grid(body.global_position)
+
+		# Check a radius around the body for reactive grid substances
+		var radius := 5
+		var reacted := false
+		for dy in range(-radius, radius + 1):
+			if reacted:
+				break
+			for dx in range(-radius, radius + 1):
+				if dx * dx + dy * dy > radius * radius:
+					continue
+				var nx := grid_pos.x + dx
+				var ny := grid_pos.y + dy
+				var grid_sub_id := grid.get_cell(nx, ny)
+				if grid_sub_id <= 0:
+					continue
+
+				var grid_sub := SubstanceRegistry.get_substance(grid_sub_id)
+				if not grid_sub:
+					continue
+
+				var temp: float = grid.temperatures[grid.idx(nx, ny)] if grid.in_bounds(nx, ny) else 20.0
+
+				# Check reaction: grid substance acting on rigid body substance
+				var result := ReactionRules.evaluate(grid_sub, body_sub, temp, temp)
+				if result.has_reaction() and result.consumed_b:
+					# The rigid body dissolves
+					rigid_body_mgr.dissolve_body(body)
+					_apply_heat(grid_pos.x, grid_pos.y, result.heat_output)
+					if result.gas_produced != "":
+						_spawn_gas(grid_pos.x, grid_pos.y, result.gas_produced)
+					if game_log:
+						game_log.log_event(
+							"%s dissolves %s!" % [grid_sub.substance_name, body_sub.substance_name],
+							Color(1.0, 0.4, 0.1)
+						)
+					reacted = true
+					reactions_this_frame += 1
+					break
 
 
 func _check_phase_changes_sparse() -> void:

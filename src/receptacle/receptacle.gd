@@ -49,6 +49,7 @@ func _ready() -> void:
 	add_child(rigid_body_mgr)
 
 	# Create static collision walls for rigid bodies.
+	# Uses a polygon that follows the oval boundary shape.
 	var walls := StaticBody2D.new()
 	add_child(walls)
 
@@ -56,29 +57,43 @@ func _ready() -> void:
 	var h_px := float(GRID_HEIGHT * CELL_SIZE)
 	var wall_thick := 10.0
 
-	# Left wall.
+	# Left wall (straight portion above the oval).
 	var left_col := CollisionShape2D.new()
 	var left_shape := RectangleShape2D.new()
-	left_shape.size = Vector2(wall_thick, h_px)
+	var oval_cy := h_px * 0.45
+	left_shape.size = Vector2(wall_thick, oval_cy)
 	left_col.shape = left_shape
-	left_col.position = Vector2(-wall_thick / 2.0, h_px / 2.0)
+	left_col.position = Vector2(-wall_thick / 2.0, oval_cy / 2.0)
 	walls.add_child(left_col)
 
-	# Right wall.
+	# Right wall (straight portion above the oval).
 	var right_col := CollisionShape2D.new()
 	var right_shape := RectangleShape2D.new()
-	right_shape.size = Vector2(wall_thick, h_px)
+	right_shape.size = Vector2(wall_thick, oval_cy)
 	right_col.shape = right_shape
-	right_col.position = Vector2(w_px + wall_thick / 2.0, h_px / 2.0)
+	right_col.position = Vector2(w_px + wall_thick / 2.0, oval_cy / 2.0)
 	walls.add_child(right_col)
 
-	# Bottom.
-	var bottom_col := CollisionShape2D.new()
-	var bottom_shape := RectangleShape2D.new()
-	bottom_shape.size = Vector2(w_px, wall_thick)
-	bottom_col.shape = bottom_shape
-	bottom_col.position = Vector2(w_px / 2.0, h_px + wall_thick / 2.0)
-	walls.add_child(bottom_col)
+	# Oval bottom — build a chain of segment collision shapes.
+	var cx_px := w_px / 2.0
+	var cy_px := h_px - h_px * 0.45  # Same as _draw() uses.
+	var rx_px := w_px / 2.0
+	var ry_px := h_px * 0.45
+	var segments := 20
+	for i in range(segments):
+		var t1 := float(i) / segments
+		var t2 := float(i + 1) / segments
+		var angle1 := t1 * PI
+		var angle2 := t2 * PI
+		var p1 := Vector2(cx_px - cos(angle1) * rx_px, cy_px + sin(angle1) * ry_px)
+		var p2 := Vector2(cx_px - cos(angle2) * rx_px, cy_px + sin(angle2) * ry_px)
+
+		var seg_col := CollisionShape2D.new()
+		var seg_shape := SegmentShape2D.new()
+		seg_shape.a = p1
+		seg_shape.b = p2
+		seg_col.shape = seg_shape
+		walls.add_child(seg_col)
 
 
 func setup_rigid_bodies() -> void:
