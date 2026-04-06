@@ -37,7 +37,7 @@ func _ready() -> void:
 	var rec_size := receptacle.get_screen_size()
 	receptacle.position = Vector2(
 		(screen_size.x - rec_size.x) / 2,
-		screen_size.y - rec_size.y - 60
+		(screen_size.y - rec_size.y + 80) / 2
 	)
 
 	# Debug overlay on a CanvasLayer so it's always on top.
@@ -131,9 +131,9 @@ func _ready() -> void:
 func _input(event: InputEvent) -> void:
 	# Number keys 1-9 to select substance.
 	if event is InputEventKey and event.pressed:
-		var key := event.keycode
+		var key: int = event.keycode
 		if key >= KEY_1 and key <= KEY_9:
-			var index := key - KEY_1 + 1
+			var index: int = key - KEY_1 + 1
 			if index <= SubstanceRegistry.get_count():
 				_selected_substance_id = index
 				var substance := SubstanceRegistry.get_substance(index)
