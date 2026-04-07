@@ -183,12 +183,31 @@ func get_density_readback() -> PackedFloat32Array:
 
 
 func get_stats() -> Dictionary:
-	# Placeholder — filled in Task 8
+	var total_mass := 0.0
+	var fluid_cells := 0
+	for d in _density_readback:
+		total_mass += d
+		if d > 0.05:
+			fluid_cells += 1
+
+	var max_vel := 0.0
+	for u in _u_readback:
+		if absf(u) > max_vel:
+			max_vel = absf(u)
+	for v in _v_readback:
+		if absf(v) > max_vel:
+			max_vel = absf(v)
+
+	var max_div := 0.0
+	for d in _divergence_readback:
+		if absf(d) > max_div:
+			max_div = absf(d)
+
 	return {
-		"total_mass": 0.0,
-		"max_velocity": 0.0,
-		"max_divergence": 0.0,
-		"fluid_cells": 0,
+		"total_mass": total_mass,
+		"max_velocity": max_vel,
+		"max_divergence": max_div,
+		"fluid_cells": fluid_cells,
 	}
 
 
@@ -394,5 +413,14 @@ func _dispatch(pipeline: RID, uniform_set: RID) -> void:
 
 
 func _readback_density() -> void:
-	var bytes := rd.buffer_get_data(buf_density)
-	_density_readback = bytes.to_float32_array()
+	var d_bytes := rd.buffer_get_data(buf_density)
+	_density_readback = d_bytes.to_float32_array()
+
+	var u_bytes := rd.buffer_get_data(buf_u_vel)
+	_u_readback = u_bytes.to_float32_array()
+
+	var v_bytes := rd.buffer_get_data(buf_v_vel)
+	_v_readback = v_bytes.to_float32_array()
+
+	var div_bytes := rd.buffer_get_data(buf_divergence)
+	_divergence_readback = div_bytes.to_float32_array()
