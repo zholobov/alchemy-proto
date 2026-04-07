@@ -41,7 +41,7 @@ layout(set = 0, binding = 6, std430) restrict buffer DensityFloat {
     float data[];
 } density_float;
 
-const float PARTICLES_PER_CELL = 4.0;  // 4 particles in a cell = density 1.0
+const float PARTICLES_PER_CELL = 8.0;  // 8 particles in a cell = density 1.0 (Tier 1: more for less stippling)
 
 void main() {
     int x = int(gl_GlobalInvocationID.x);

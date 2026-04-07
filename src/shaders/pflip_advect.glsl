@@ -30,9 +30,9 @@ layout(set = 0, binding = 2, std430) restrict buffer BoundaryBuffer {
     int data[];  // 1 = interior, 0 = wall
 } boundary;
 
-const float GRAVITY = 20.0;       // cells per second^2
-const float DAMPING = 0.999;      // per-frame velocity damping (very gentle)
-const float MAX_VELOCITY = 30.0;  // CFL safety cap
+const float GRAVITY = 60.0;        // cells per second^2 (Tier 1 tuning)
+const float DAMPING = 1.0;         // disabled — let swirls survive
+const float MAX_VELOCITY = 100.0;  // CFL: at 120 FPS, max move = 100/120 = 0.83 cells
 
 bool is_wall(int cx, int cy, int w, int h) {
     if (cx < 0 || cx >= w || cy < 0 || cy >= h) return true;

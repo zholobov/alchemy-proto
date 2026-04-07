@@ -146,7 +146,7 @@ func _spawn_at_mouse() -> void:
 			if dx * dx + dy * dy > radius * radius:
 				continue
 			# 4 jittered particles per cell
-			for ii in range(4):
+			for ii in range(8):
 				var jx := randf() * 0.8 + 0.1
 				var jy := randf() * 0.8 + 0.1
 				positions.append(Vector2(gx + dx + jx, gy + dy + jy))
@@ -184,7 +184,7 @@ func _scenario_center_blob() -> void:
 			if dx * dx + dy * dy > 36:
 				continue
 			# 4 particles per cell
-			for ii in range(4):
+			for ii in range(8):
 				var jx := randf() * 0.8 + 0.1
 				var jy := randf() * 0.8 + 0.1
 				positions.append(Vector2(cx + dx + jx, cy + dy + jy))
@@ -197,7 +197,7 @@ func _scenario_top_stream() -> void:
 	var positions: Array[Vector2] = []
 	for dy in range(0, 8):
 		for dx in range(-2, 3):
-			for ii in range(4):
+			for ii in range(8):
 				var jx := randf() * 0.8 + 0.1
 				var jy := randf() * 0.8 + 0.1
 				positions.append(Vector2(cx + dx + jx, cy + dy + jy))
@@ -209,7 +209,7 @@ func _scenario_column() -> void:
 	var positions: Array[Vector2] = []
 	for y in range(5, 60):
 		for dx in range(-2, 3):
-			for ii in range(4):
+			for ii in range(8):
 				var jx := randf() * 0.8 + 0.1
 				var jy := randf() * 0.8 + 0.1
 				positions.append(Vector2(cx + dx + jx, y + jy))

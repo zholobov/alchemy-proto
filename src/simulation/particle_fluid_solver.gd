@@ -13,15 +13,20 @@ extends RefCounted
 ##   3. normalize: divide accumulated u/v by weights, convert density to float
 ##   4. classify: cell type from float density (reuses fluid_classify.glsl)
 ##   5. wall_zero: zero velocities at wall faces (reuses fluid_wall_zero.glsl)
-##   6. body_forces: gravity (reuses fluid_body_forces.glsl) — applied to grid
-##   7. wall_zero: again, after gravity
-##   8. save_vel: snapshot u/v as u_old/v_old for FLIP delta
-##   9. divergence (reuses fluid_divergence.glsl)
-##   10. jacobi (200 iterations, reuses fluid_jacobi.glsl)
-##   11. gradient (reuses fluid_gradient.glsl)
-##   12. wall_zero
-##   13. g2p: gather corrected grid velocity back to particles, FLIP delta
-##   14. advect: move particles, gravity, boundary collision
+##   6. save_vel: snapshot u/v as u_old/v_old for FLIP delta
+##   7. divergence (reuses fluid_divergence.glsl)
+##   8. jacobi (80 iterations, reuses fluid_jacobi.glsl)
+##   9. gradient (reuses fluid_gradient.glsl)
+##   10. wall_zero
+##   11. g2p: gather corrected grid velocity back to particles, FLIP delta
+##   12. advect: apply gravity per-particle, move, boundary collision
+##
+## Note: gravity is applied PER-PARTICLE only (in advect), NOT on the grid.
+## In hybrid PIC/FLIP, the FLIP component preserves particle momentum across
+## frames; if gravity were also applied to grid velocities and captured in the
+## FLIP delta, it would cancel out (saved=after-gravity, current=after-gravity-
+## minus-pressure, delta=just pressure). Per-particle gravity is the standard
+## approach in FLIP literature.
 
 const MAX_PARTICLES := 65536
 const PARTICLE_STRIDE := 24  # bytes: vec2 pos + vec2 vel + int substance + int alive
@@ -64,7 +69,6 @@ var shader_save_vel: RID
 var shader_g2p: RID
 var shader_advect: RID
 var shader_classify: RID
-var shader_body_forces: RID
 var shader_wall_zero: RID
 var shader_divergence: RID
 var shader_jacobi: RID
@@ -78,7 +82,6 @@ var pipeline_save_vel: RID
 var pipeline_g2p: RID
 var pipeline_advect: RID
 var pipeline_classify: RID
-var pipeline_body_forces: RID
 var pipeline_wall_zero: RID
 var pipeline_divergence: RID
 var pipeline_jacobi: RID
@@ -92,7 +95,6 @@ var uset_save_vel: RID
 var uset_g2p: RID
 var uset_advect: RID
 var uset_classify: RID
-var uset_body_forces: RID
 var uset_wall_zero: RID
 var uset_divergence: RID
 var uset_jacobi_ab: RID
@@ -152,13 +154,8 @@ func step(delta: float) -> void:
 	# Pass 5: zero wall-adjacent velocities
 	_dispatch(pipeline_wall_zero, uset_wall_zero, groups_grid_x, groups_grid_y)
 
-	# Pass 6: apply gravity to grid v-velocity (body forces)
-	_dispatch(pipeline_body_forces, uset_body_forces, groups_grid_x, groups_grid_y)
-
-	# Pass 7: zero walls again after gravity
-	_dispatch(pipeline_wall_zero, uset_wall_zero, groups_grid_x, groups_grid_y)
-
-	# Pass 8: snapshot velocities for FLIP delta computation
+	# Pass 6: snapshot velocities for FLIP delta (= pressure correction only).
+	# Gravity is NOT applied here — it's applied per-particle in advect.
 	_dispatch(pipeline_save_vel, uset_save_vel, groups_grid_x, groups_grid_y)
 
 	# Pass 9: compute divergence
@@ -275,14 +272,14 @@ func cleanup() -> void:
 
 	# Free pipelines
 	for p in [pipeline_clear_grid, pipeline_p2g, pipeline_normalize, pipeline_save_vel,
-			  pipeline_g2p, pipeline_advect, pipeline_classify, pipeline_body_forces,
+			  pipeline_g2p, pipeline_advect, pipeline_classify,
 			  pipeline_wall_zero, pipeline_divergence, pipeline_jacobi, pipeline_gradient]:
 		if p.is_valid():
 			rd.free_rid(p)
 
 	# Free shaders
 	for s in [shader_clear_grid, shader_p2g, shader_normalize, shader_save_vel,
-			  shader_g2p, shader_advect, shader_classify, shader_body_forces,
+			  shader_g2p, shader_advect, shader_classify,
 			  shader_wall_zero, shader_divergence, shader_jacobi, shader_gradient]:
 		if s.is_valid():
 			rd.free_rid(s)
@@ -359,7 +356,6 @@ func _compile_shaders() -> void:
 	shader_advect = _load("res://src/shaders/pflip_advect.glsl")
 	# Reused from the grid solver:
 	shader_classify = _load("res://src/shaders/fluid_classify.glsl")
-	shader_body_forces = _load("res://src/shaders/fluid_body_forces.glsl")
 	shader_wall_zero = _load("res://src/shaders/fluid_wall_zero.glsl")
 	shader_divergence = _load("res://src/shaders/fluid_divergence.glsl")
 	shader_jacobi = _load("res://src/shaders/fluid_jacobi.glsl")
@@ -452,14 +448,6 @@ func _create_pipelines() -> void:
 		[1, buf_density_float],
 		[2, buf_boundary],
 		[3, buf_cell_type],
-	])
-
-	# body_forces
-	pipeline_body_forces = rd.compute_pipeline_create(shader_body_forces)
-	uset_body_forces = _build_uset(shader_body_forces, [
-		[0, buf_params],
-		[1, buf_cell_type],
-		[2, buf_v_vel],
 	])
 
 	# wall_zero
