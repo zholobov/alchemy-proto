@@ -545,8 +545,6 @@ func clear_all() -> void:
 	temps.fill(20.0)
 	rd.buffer_update(buf_temperatures, 0, cell_count * 4, temps.to_byte_array())
 
-	var zeros_f := PackedFloat32Array()
-	zeros_f.resize(cell_count)
 	var u_size: int = (width + 1) * height
 	var u_zeros := PackedFloat32Array()
 	u_zeros.resize(u_size)
@@ -555,7 +553,9 @@ func clear_all() -> void:
 	var v_zeros := PackedFloat32Array()
 	v_zeros.resize(v_size)
 	rd.buffer_update(buf_v_velocity, 0, v_size * 4, v_zeros.to_byte_array())
-	rd.buffer_update(buf_pressure, 0, cell_count * 4, zeros_f.to_byte_array())
+	var press_zeros := PackedFloat32Array()
+	press_zeros.resize(cell_count)
+	rd.buffer_update(buf_pressure, 0, cell_count * 4, press_zeros.to_byte_array())
 
 	_has_fluid = false
 	_readback()
