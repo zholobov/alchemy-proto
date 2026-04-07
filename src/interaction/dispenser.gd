@@ -71,10 +71,8 @@ func _emit_particle(screen_pos: Vector2) -> void:
 
 	var pos := Vector2i(gx, gy)
 	if _gpu_sim:
-		if sub.phase == SubstanceDef.Phase.LIQUID:
-			_gpu_sim.spawn_fluid([pos], substance_id)
-		else:
-			_gpu_sim.spawn_cells([pos], substance_id)
+		# Liquids use falling-sand in particle grid (MAC disabled).
+		_gpu_sim.spawn_cells([pos], substance_id)
 	else:
 		if sub.phase == SubstanceDef.Phase.LIQUID:
 			_fluid.spawn_fluid(gx, gy, substance_id)

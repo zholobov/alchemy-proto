@@ -441,9 +441,10 @@ func step(delta: float) -> void:
 		rd.submit()
 		rd.sync()
 
-	# Dispatch fluid sim (if fluid exists)
-	if _has_fluid:
-		_dispatch_fluid(delta)
+	# Fluid MAC sim disabled — liquids use falling-sand rules in the particle grid.
+	# See docs for future MAC work.
+	# if _has_fluid:
+	# 	_dispatch_fluid(delta)
 
 	# Dispatch fields update (temperature diffusion)
 	var fields_list := rd.compute_list_begin()

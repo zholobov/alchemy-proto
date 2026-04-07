@@ -230,10 +230,8 @@ func _on_substance_pouring(substance_id: int, pos: Vector2) -> void:
 			if dx * dx + dy * dy <= radius * radius:
 				positions.append(Vector2i(grid_pos.x + dx, grid_pos.y + dy))
 
-	if substance.phase == SubstanceDef.Phase.LIQUID:
-		receptacle.gpu_sim.spawn_fluid(positions, substance_id)
-	else:
-		receptacle.gpu_sim.spawn_cells(positions, substance_id)
+	# Liquids use falling-sand rules in the particle grid (MAC fluid disabled).
+	receptacle.gpu_sim.spawn_cells(positions, substance_id)
 
 
 func _clear_receptacle() -> void:
@@ -257,24 +255,13 @@ func _flood_fill() -> void:
 	var substance := SubstanceRegistry.get_substance(_selected_substance_id)
 	if not substance:
 		return
-	var is_liquid := substance.phase == SubstanceDef.Phase.LIQUID
 	var positions: Array[Vector2i] = []
 	for i in range(receptacle.grid.cells.size()):
-		if receptacle.grid.boundary[i] == 1:
-			if is_liquid:
-				if receptacle.fluid.markers[i] == 0 and receptacle.grid.cells[i] == 0:
-					var x: int = i % receptacle.grid.width
-					var y: int = floori(float(i) / float(receptacle.grid.width))
-					positions.append(Vector2i(x, y))
-			else:
-				if receptacle.grid.cells[i] == 0 and receptacle.fluid.markers[i] == 0:
-					var x: int = i % receptacle.grid.width
-					var y: int = floori(float(i) / float(receptacle.grid.width))
-					positions.append(Vector2i(x, y))
-	if is_liquid:
-		receptacle.gpu_sim.spawn_fluid(positions, _selected_substance_id)
-	else:
-		receptacle.gpu_sim.spawn_cells(positions, _selected_substance_id)
+		if receptacle.grid.boundary[i] == 1 and receptacle.grid.cells[i] == 0:
+			var x: int = i % receptacle.grid.width
+			var y: int = floori(float(i) / float(receptacle.grid.width))
+			positions.append(Vector2i(x, y))
+	receptacle.gpu_sim.spawn_cells(positions, _selected_substance_id)
 	game_log.log_event("Flood filled %d cells with %s" % [positions.size(), _selected_substance_name], Color.ORANGE)
 
 
