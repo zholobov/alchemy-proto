@@ -69,6 +69,7 @@ var shader_save_vel: RID
 var shader_g2p: RID
 var shader_advect: RID
 var shader_classify: RID
+var shader_density_correction: RID
 var shader_wall_zero: RID
 var shader_divergence: RID
 var shader_jacobi: RID
@@ -82,6 +83,7 @@ var pipeline_save_vel: RID
 var pipeline_g2p: RID
 var pipeline_advect: RID
 var pipeline_classify: RID
+var pipeline_density_correction: RID
 var pipeline_wall_zero: RID
 var pipeline_divergence: RID
 var pipeline_jacobi: RID
@@ -95,6 +97,7 @@ var uset_save_vel: RID
 var uset_g2p: RID
 var uset_advect: RID
 var uset_classify: RID
+var uset_density_correction: RID
 var uset_wall_zero: RID
 var uset_divergence: RID
 var uset_jacobi_ab: RID
@@ -158,8 +161,12 @@ func step(delta: float) -> void:
 	# Gravity is NOT applied here — it's applied per-particle in advect.
 	_dispatch(pipeline_save_vel, uset_save_vel, groups_grid_x, groups_grid_y)
 
-	# Pass 9: compute divergence
+	# Pass 7: compute divergence
 	_dispatch(pipeline_divergence, uset_divergence, groups_grid_x, groups_grid_y)
+
+	# Pass 7b: PIC/FLIP density correction. Adds a negative term to the divergence
+	# at over-packed cells so the pressure solve creates outward force.
+	_dispatch(pipeline_density_correction, uset_density_correction, groups_grid_x, groups_grid_y)
 
 	# Pass 10: Jacobi pressure projection (batched in one compute list)
 	rd.buffer_copy(buf_pressure, buf_pressure_out, 0, 0, cell_count * 4)
@@ -272,14 +279,14 @@ func cleanup() -> void:
 
 	# Free pipelines
 	for p in [pipeline_clear_grid, pipeline_p2g, pipeline_normalize, pipeline_save_vel,
-			  pipeline_g2p, pipeline_advect, pipeline_classify,
+			  pipeline_g2p, pipeline_advect, pipeline_classify, pipeline_density_correction,
 			  pipeline_wall_zero, pipeline_divergence, pipeline_jacobi, pipeline_gradient]:
 		if p.is_valid():
 			rd.free_rid(p)
 
 	# Free shaders
 	for s in [shader_clear_grid, shader_p2g, shader_normalize, shader_save_vel,
-			  shader_g2p, shader_advect, shader_classify,
+			  shader_g2p, shader_advect, shader_classify, shader_density_correction,
 			  shader_wall_zero, shader_divergence, shader_jacobi, shader_gradient]:
 		if s.is_valid():
 			rd.free_rid(s)
@@ -354,6 +361,7 @@ func _compile_shaders() -> void:
 	shader_save_vel = _load("res://src/shaders/pflip_save_vel.glsl")
 	shader_g2p = _load("res://src/shaders/pflip_g2p.glsl")
 	shader_advect = _load("res://src/shaders/pflip_advect.glsl")
+	shader_density_correction = _load("res://src/shaders/pflip_density_correction.glsl")
 	# Reused from the grid solver:
 	shader_classify = _load("res://src/shaders/fluid_classify.glsl")
 	shader_wall_zero = _load("res://src/shaders/fluid_wall_zero.glsl")
@@ -467,6 +475,15 @@ func _create_pipelines() -> void:
 		[2, buf_u_vel],
 		[3, buf_v_vel],
 		[4, buf_divergence],
+	])
+
+	# density_correction (PIC/FLIP only — modifies divergence to push particles apart)
+	pipeline_density_correction = rd.compute_pipeline_create(shader_density_correction)
+	uset_density_correction = _build_uset(shader_density_correction, [
+		[0, buf_params],
+		[1, buf_density_float],
+		[2, buf_cell_type],
+		[3, buf_divergence],
 	])
 
 	# jacobi (ping-pong)
