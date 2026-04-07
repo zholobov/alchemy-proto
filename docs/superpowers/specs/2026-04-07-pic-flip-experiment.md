@@ -153,6 +153,25 @@ This is amplified by:
 
 **Recommendation:** Combine #1 (more particles per cell, e.g., 8) with #4 (Gaussian density kernel). #1 fixes the statistical noise; #4 makes the density field smooth even at the boundary. Both are ~30 lines total.
 
+## TODO 3: Add viscosity (water feels too dynamic / lively)
+
+User observation: water moves too freely — swirls and momentum persist
+forever, unlike real water which has internal drag.
+
+We currently have zero viscosity. Real water has *some*. Implementation
+in PIC/FLIP is a velocity-diffusion pass: after pressure projection but
+before g2p, each grid face's velocity averages with a fraction of its
+neighbors. ~30 lines, one new shader. Tunable: 0 (none) to 1 (molasses).
+
+```glsl
+// pflip_viscosity.glsl (sketch)
+float laplacian_u = u[i-1] + u[i+1] + u[j-1] + u[j+1] - 4*u[ij];
+u_new[ij] = u[ij] + viscosity * dt * laplacian_u;
+// (and same for v)
+```
+
+Standard fluid sim trick. Probably want viscosity ≈ 0.05–0.2 to start.
+
 ## TODO 2: Slow falling and movement speed
 
 User observation: water falls and moves visibly slower than real water would.
