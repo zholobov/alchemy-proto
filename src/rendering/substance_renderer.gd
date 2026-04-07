@@ -74,7 +74,10 @@ func render() -> void:
 		else:
 			color = Color.MAGENTA
 
-		# Blend fluid on top if present.
+		# Blend fluid on top if present. Scale fluid alpha by density so thin
+		# fluid cells are translucent and dense cells are opaque. This makes
+		# semi-Lagrangian "haze" cells fade out gracefully instead of being
+		# rendered as solid color.
 		if fluid and fluid.markers[i] != 0:
 			var fluid_id: int = fluid.markers[i]
 			var fluid_color: Color
@@ -82,6 +85,10 @@ func render() -> void:
 				fluid_color = _color_cache[fluid_id]
 			else:
 				fluid_color = Color.MAGENTA
+			# Scale by density (clamped 0..1). Use sqrt to make low-density
+			# cells more visible than linear scaling would (sqrt(0.1)=0.32 vs 0.1).
+			var density_factor: float = sqrt(clampf(fluid.densities[i], 0.0, 1.0))
+			fluid_color.a *= density_factor
 			if color.a > 0:
 				color = color.lerp(fluid_color, fluid_color.a)
 			else:

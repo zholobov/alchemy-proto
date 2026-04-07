@@ -155,20 +155,23 @@ func sync_from_gpu() -> void:
 	for i in range(mini(temps_data.size(), grid.temperatures.size())):
 		grid.temperatures[i] = temps_data[i]
 
-	# Populate the legacy fluid.markers array from the GPU fluid solver so
-	# renderers, fields, and the mediator see liquid cells. Threshold matches
-	# the solver's own internal classification threshold so the visible fluid
-	# shape matches what the solver is actually simulating — otherwise diffuse
-	# regions would be tracked but invisible.
+	# Populate the legacy fluid.markers and fluid.densities arrays from the GPU
+	# fluid solver. Renderers use markers (substance id) to pick a color and
+	# densities to scale alpha — thinner cells render more translucent. The
+	# marker threshold is low so we don't accidentally drop legitimate cells
+	# (the renderer's alpha-by-density makes the haze fade out visually
+	# instead of being a hard cutoff).
 	if fluid_solver:
 		var density := fluid_solver.get_density_readback()
 		var substance := fluid_solver.get_substance_readback()
-		const FLUID_THRESHOLD := 0.001
+		const VISIBLE_THRESHOLD := 0.005
 		for i in range(mini(density.size(), fluid.markers.size())):
-			if density[i] > FLUID_THRESHOLD:
+			if density[i] > VISIBLE_THRESHOLD:
 				fluid.markers[i] = substance[i] if i < substance.size() else 0
+				fluid.densities[i] = density[i]
 			else:
 				fluid.markers[i] = 0
+				fluid.densities[i] = 0.0
 
 
 func _exit_tree() -> void:

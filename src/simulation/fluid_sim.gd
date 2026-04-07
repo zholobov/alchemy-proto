@@ -16,6 +16,10 @@ var pressure: PackedFloat32Array  ## width * height
 ## Fluid markers: substance ID per cell. 0 = no fluid.
 var markers: PackedInt32Array  ## width * height
 
+## Per-cell density (populated from GPU MAC fluid solver each frame).
+## Used by renderers to scale alpha by density (thinner = more translucent).
+var densities: PackedFloat32Array  ## width * height
+
 ## Boundary mask — shared with particle grid.
 var boundary: PackedByteArray
 
@@ -35,6 +39,8 @@ func _init(w: int, h: int) -> void:
 	pressure.resize(w * h)
 	markers = PackedInt32Array()
 	markers.resize(w * h)
+	densities = PackedFloat32Array()
+	densities.resize(w * h)
 	boundary = PackedByteArray()
 	boundary.resize(w * h)
 	boundary.fill(1)
