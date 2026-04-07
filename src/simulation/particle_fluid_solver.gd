@@ -28,7 +28,7 @@ extends RefCounted
 ## minus-pressure, delta=just pressure). Per-particle gravity is the standard
 ## approach in FLIP literature.
 
-const MAX_PARTICLES := 65536
+const MAX_PARTICLES := 262144  # 256k. ~6 MB. Enough to fill 200x150 grid at 8/cell.
 const PARTICLE_STRIDE := 24  # bytes: vec2 pos + vec2 vel + int substance + int alive
 const JACOBI_ITERATIONS := 80
 
