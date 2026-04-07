@@ -558,3 +558,41 @@ func debug_first_particle() -> Dictionary:
 		"substance": p_bytes.decode_s32(16),
 		"alive": p_bytes.decode_s32(20),
 	}
+
+
+func debug_particle_locations(boundary: PackedByteArray) -> Dictionary:
+	## Read back ALL particle positions and count how many are in wall cells.
+	var p_bytes := rd.buffer_get_data(buf_particles, 0, _particle_count * PARTICLE_STRIDE)
+	var in_wall := 0
+	var in_air := 0
+	var in_interior := 0
+	var dead := 0
+	var x_min: float = 1e9
+	var x_max: float = -1e9
+	var y_min: float = 1e9
+	var y_max: float = -1e9
+	for pi in range(_particle_count):
+		var off := pi * PARTICLE_STRIDE
+		var alive: int = p_bytes.decode_s32(off + 20)
+		if alive == 0:
+			dead += 1
+			continue
+		var px: float = p_bytes.decode_float(off)
+		var py: float = p_bytes.decode_float(off + 4)
+		if px < x_min: x_min = px
+		if px > x_max: x_max = px
+		if py < y_min: y_min = py
+		if py > y_max: y_max = py
+		var cx: int = clampi(int(floor(px)), 0, width - 1)
+		var cy: int = clampi(int(floor(py)), 0, height - 1)
+		if boundary[cy * width + cx] == 0:
+			in_wall += 1
+		else:
+			in_interior += 1
+	return {
+		"in_wall": in_wall,
+		"in_interior": in_interior,
+		"dead": dead,
+		"x_range": Vector2(x_min, x_max),
+		"y_range": Vector2(y_min, y_max),
+	}

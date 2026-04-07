@@ -18,6 +18,7 @@ var _image: Image
 var _texture: ImageTexture
 var _sprite: Sprite2D
 var _pixels: PackedByteArray
+var _boundary: PackedByteArray  # cached for renderer to restore background each frame
 var _paused: bool = false
 var _spawning: bool = false
 
@@ -30,8 +31,8 @@ func _ready() -> void:
 	RenderingServer.set_default_clear_color(Color(0.05, 0.05, 0.1))
 
 	# Build same oval boundary as the main game's Receptacle
-	var boundary := PackedByteArray()
-	boundary.resize(GRID_W * GRID_H)
+	_boundary = PackedByteArray()
+	_boundary.resize(GRID_W * GRID_H)
 	var cx_g := GRID_W / 2
 	var cy_g := int(float(GRID_H) * 0.55)
 	var rx_g := int(float(GRID_W) / 2.0) - 2
@@ -42,15 +43,15 @@ func _ready() -> void:
 			if x < wall_margin or x >= GRID_W - wall_margin:
 				continue
 			if y < cy_g:
-				boundary[y * GRID_W + x] = 1
+				_boundary[y * GRID_W + x] = 1
 			else:
 				var dx := float(x - cx_g) / float(rx_g)
 				var dy := float(y - cy_g) / float(ry_g)
 				if dx * dx + dy * dy <= 1.0:
-					boundary[y * GRID_W + x] = 1
+					_boundary[y * GRID_W + x] = 1
 
 	solver = ParticleFluidSolver.new()
-	solver.setup(GRID_W, GRID_H, boundary)
+	solver.setup(GRID_W, GRID_H, _boundary)
 
 	_image = Image.create(GRID_W, GRID_H, false, Image.FORMAT_RGBA8)
 	_texture = ImageTexture.create_from_image(_image)
@@ -62,20 +63,8 @@ func _ready() -> void:
 	_sprite.position = Vector2(50, 80)
 	add_child(_sprite)
 
-	# Draw the oval boundary in a darker color so the user can see it
-	for y in range(GRID_H):
-		for x in range(GRID_W):
-			var off := (y * GRID_W + x) * 4
-			if boundary[y * GRID_W + x] == 0:
-				_pixels.append(40)
-				_pixels.append(35)
-				_pixels.append(30)
-				_pixels.append(255)
-			else:
-				_pixels.append(15)
-				_pixels.append(15)
-				_pixels.append(20)
-				_pixels.append(255)
+	# Allocate the pixel buffer; actual pixels are written each frame in _render().
+	_pixels.resize(GRID_W * GRID_H * 4)
 
 	_fps_label = Label.new()
 	_fps_label.position = Vector2(10, 10)
@@ -110,7 +99,6 @@ func _process(_delta: float) -> void:
 	_fps_label.text = "%d FPS %s" % [Engine.get_frames_per_second(), " [PAUSED]" if _paused else ""]
 	_stats_label.text = "Particles: %d / %d alive" % [stats["particle_count"], stats["max_particles"]]
 
-
 	_render()
 
 
@@ -120,15 +108,26 @@ func _render() -> void:
 		for x in range(GRID_W):
 			var i := y * GRID_W + x
 			var off := i * 4
+			# Always write the pixel (background or water) so the previous
+			# frame's water doesn't leave a trail when particles move away.
+			var is_wall: bool = _boundary[i] == 0
 			var d: float = density[i] if i < density.size() else 0.0
 			if d > 0.001:
-				# Water blue, alpha scaled by density (sqrt for visibility).
 				var alpha: float = sqrt(clampf(d, 0.0, 1.0))
 				_pixels[off] = int(50 * alpha + 15 * (1.0 - alpha))
 				_pixels[off + 1] = int(120 * alpha + 15 * (1.0 - alpha))
 				_pixels[off + 2] = int(220 * alpha + 20 * (1.0 - alpha))
 				_pixels[off + 3] = 255
-			# else leave the boundary background pixel from setup
+			elif is_wall:
+				_pixels[off] = 40
+				_pixels[off + 1] = 35
+				_pixels[off + 2] = 30
+				_pixels[off + 3] = 255
+			else:
+				_pixels[off] = 15
+				_pixels[off + 1] = 15
+				_pixels[off + 2] = 20
+				_pixels[off + 3] = 255
 	_image = Image.create_from_data(GRID_W, GRID_H, false, Image.FORMAT_RGBA8, _pixels)
 	_texture.update(_image)
 

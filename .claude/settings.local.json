@@ -59,7 +59,8 @@
       "Bash(/Applications/Godot.app/Contents/MacOS/Godot --path /Users/zholobov/src/gd-alchemy-proto tests/pflip_test.tscn --quit-after 300)",
       "Bash(/Applications/Godot.app/Contents/MacOS/Godot --path /Users/zholobov/src/gd-alchemy-proto tests/pflip_test.tscn --quit-after 100 --verbose)",
       "Bash(/Applications/Godot.app/Contents/MacOS/Godot --path /Users/zholobov/src/gd-alchemy-proto tests/pflip_test.tscn --quit-after 100)",
-      "Bash(/Applications/Godot.app/Contents/MacOS/Godot --path /Users/zholobov/src/gd-alchemy-proto tests/pflip_test.tscn --quit-after 1500)"
+      "Bash(/Applications/Godot.app/Contents/MacOS/Godot --path /Users/zholobov/src/gd-alchemy-proto tests/pflip_test.tscn --quit-after 1500)",
+      "Bash(/Applications/Godot.app/Contents/MacOS/Godot --path /Users/zholobov/src/gd-alchemy-proto tests/pflip_test.tscn --quit-after 2400)"
     ]
   }
 }
