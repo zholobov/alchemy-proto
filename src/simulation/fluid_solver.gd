@@ -91,9 +91,10 @@ func setup(w: int, h: int, boundary_mask: PackedByteArray = PackedByteArray()) -
 	print("FluidSolver initialized: %dx%d" % [w, h])
 
 
-func step(_delta: float) -> void:
-	# Placeholder — filled in later tasks
-	pass
+func step(delta: float) -> void:
+	_update_params(delta)
+	_dispatch(pipeline_classify, uniform_set_classify)
+	_readback_density()
 
 
 func clear() -> void:
@@ -214,10 +215,63 @@ func _create_buffers(boundary_mask: PackedByteArray) -> void:
 
 
 func _compile_shaders() -> void:
-	# Placeholder — filled in Task 4
-	pass
+	shader_classify = _load_shader("res://src/shaders/fluid_classify.glsl")
+
+
+func _load_shader(path: String) -> RID:
+	var file := load(path) as RDShaderFile
+	if not file:
+		push_error("FluidSolver: failed to load %s" % path)
+		return RID()
+	var spirv := file.get_spirv()
+	var shader := rd.shader_create_from_spirv(spirv)
+	if not shader.is_valid():
+		push_error("FluidSolver: failed to compile %s" % path)
+	return shader
 
 
 func _create_pipelines() -> void:
-	# Placeholder — filled in Task 4
-	pass
+	pipeline_classify = rd.compute_pipeline_create(shader_classify)
+	uniform_set_classify = _build_uniform_set(shader_classify, [
+		[0, buf_params],
+		[1, buf_density],
+		[2, buf_boundary],
+		[3, buf_cell_type],
+	])
+
+
+func _build_uniform_set(shader: RID, bindings: Array) -> RID:
+	## Helper: builds a uniform set from [binding_index, buffer_rid] pairs.
+	var uniforms: Array[RDUniform] = []
+	for b in bindings:
+		var u := RDUniform.new()
+		u.uniform_type = RenderingDevice.UNIFORM_TYPE_STORAGE_BUFFER
+		u.binding = b[0]
+		u.add_id(b[1])
+		uniforms.append(u)
+	return rd.uniform_set_create(uniforms, shader, 0)
+
+
+func _update_params(delta: float) -> void:
+	var bytes := PackedByteArray()
+	bytes.resize(16)
+	bytes.encode_s32(0, width)
+	bytes.encode_s32(4, height)
+	bytes.encode_float(8, delta)
+	bytes.encode_s32(12, 0)
+	rd.buffer_update(buf_params, 0, 16, bytes)
+
+
+func _dispatch(pipeline: RID, uniform_set: RID) -> void:
+	var compute_list := rd.compute_list_begin()
+	rd.compute_list_bind_compute_pipeline(compute_list, pipeline)
+	rd.compute_list_bind_uniform_set(compute_list, uniform_set, 0)
+	rd.compute_list_dispatch(compute_list, groups_x, groups_y, 1)
+	rd.compute_list_end()
+	rd.submit()
+	rd.sync()
+
+
+func _readback_density() -> void:
+	var bytes := rd.buffer_get_data(buf_density)
+	_density_readback = bytes.to_float32_array()
