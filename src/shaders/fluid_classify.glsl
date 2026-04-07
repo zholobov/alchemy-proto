@@ -25,7 +25,7 @@ layout(set = 0, binding = 3, std430) restrict buffer CellTypeBuffer {
 const int CELL_AIR = 0;
 const int CELL_FLUID = 1;
 const int CELL_WALL = 2;
-const float FLUID_THRESHOLD = 0.05;
+const float FLUID_THRESHOLD = 0.001;
 
 void main() {
     int x = int(gl_GlobalInvocationID.x);

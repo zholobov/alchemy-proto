@@ -187,7 +187,7 @@ func get_stats() -> Dictionary:
 	var fluid_cells := 0
 	for d in _density_readback:
 		total_mass += d
-		if d > 0.05:
+		if d > 0.001:
 			fluid_cells += 1
 
 	var max_vel := 0.0
