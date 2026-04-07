@@ -142,7 +142,7 @@ func render() -> void:
 func _blur_density(w: int, h: int) -> void:
 	## Fast blur using native Image downscale+upscale (C++, not GDScript loops).
 	var img := Image.create_from_data(w, h, false, Image.FORMAT_R8, _density_pixels)
-	img.resize(maxi(w / 4, 1), maxi(h / 4, 1), Image.INTERPOLATE_BILINEAR)
+	img.resize(maxi(floori(w / 4.0), 1), maxi(floori(h / 4.0), 1), Image.INTERPOLATE_BILINEAR)
 	img.resize(w, h, Image.INTERPOLATE_BILINEAR)
 	var blurred_bytes := img.get_data()
 	for i in range(w * h):
