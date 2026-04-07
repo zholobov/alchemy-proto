@@ -59,21 +59,39 @@ void main() {
     float p_here = pressure.data[idx];
 
     // Subtract pressure gradient from velocities at this cell's faces.
-    // Only update velocities where both sides are fluid (avoid touching walls/air edges).
-    if (x > 0 && cell_type.data[idx - 1] == CELL_FLUID) {
-        float p_left = pressure_at(x - 1, y, w, h);
-        u_vel.data[u_idx(x, y, w)] -= (p_here - p_left);
+    // Update velocities at fluid-fluid AND fluid-air boundaries (air = atmospheric = 0).
+    // Skip walls (velocity is zeroed separately).
+
+    // Left face: between (x-1, y) and (x, y)
+    if (x > 0) {
+        int left_idx = idx - 1;
+        if (cell_type.data[left_idx] != CELL_WALL) {
+            float p_left = (cell_type.data[left_idx] == CELL_FLUID) ? pressure.data[left_idx] : 0.0;
+            u_vel.data[u_idx(x, y, w)] -= (p_here - p_left);
+        }
     }
-    if (x < w - 1 && cell_type.data[idx + 1] == CELL_FLUID) {
-        float p_right = pressure_at(x + 1, y, w, h);
-        u_vel.data[u_idx(x + 1, y, w)] -= (p_right - p_here);
+    // Right face: between (x, y) and (x+1, y)
+    if (x < w - 1) {
+        int right_idx = idx + 1;
+        if (cell_type.data[right_idx] != CELL_WALL) {
+            float p_right = (cell_type.data[right_idx] == CELL_FLUID) ? pressure.data[right_idx] : 0.0;
+            u_vel.data[u_idx(x + 1, y, w)] -= (p_right - p_here);
+        }
     }
-    if (y > 0 && cell_type.data[idx - w] == CELL_FLUID) {
-        float p_top = pressure_at(x, y - 1, w, h);
-        v_vel.data[v_idx(x, y, w)] -= (p_here - p_top);
+    // Top face: between (x, y-1) and (x, y)
+    if (y > 0) {
+        int top_idx = idx - w;
+        if (cell_type.data[top_idx] != CELL_WALL) {
+            float p_top = (cell_type.data[top_idx] == CELL_FLUID) ? pressure.data[top_idx] : 0.0;
+            v_vel.data[v_idx(x, y, w)] -= (p_here - p_top);
+        }
     }
-    if (y < h - 1 && cell_type.data[idx + w] == CELL_FLUID) {
-        float p_bottom = pressure_at(x, y + 1, w, h);
-        v_vel.data[v_idx(x, y + 1, w)] -= (p_bottom - p_here);
+    // Bottom face: between (x, y) and (x, y+1)
+    if (y < h - 1) {
+        int bottom_idx = idx + w;
+        if (cell_type.data[bottom_idx] != CELL_WALL) {
+            float p_bottom = (cell_type.data[bottom_idx] == CELL_FLUID) ? pressure.data[bottom_idx] : 0.0;
+            v_vel.data[v_idx(x, y + 1, w)] -= (p_bottom - p_here);
+        }
     }
 }
