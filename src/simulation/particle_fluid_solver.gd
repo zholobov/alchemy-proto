@@ -75,6 +75,7 @@ var shader_advect: RID
 var shader_classify: RID
 var shader_density_correction: RID
 var shader_viscosity: RID
+var shader_extrapolate: RID
 var shader_wall_zero: RID
 var shader_divergence: RID
 var shader_jacobi: RID
@@ -90,6 +91,7 @@ var pipeline_advect: RID
 var pipeline_classify: RID
 var pipeline_density_correction: RID
 var pipeline_viscosity: RID
+var pipeline_extrapolate: RID
 var pipeline_wall_zero: RID
 var pipeline_divergence: RID
 var pipeline_jacobi: RID
@@ -105,6 +107,7 @@ var uset_advect: RID
 var uset_classify: RID
 var uset_density_correction: RID
 var uset_viscosity: RID
+var uset_extrapolate: RID
 var uset_wall_zero: RID
 var uset_divergence: RID
 var uset_jacobi_ab: RID
@@ -196,9 +199,18 @@ func step(delta: float) -> void:
 	# Pass 11: apply pressure gradient to velocities
 	_dispatch(pipeline_gradient, uset_gradient, groups_grid_x, groups_grid_y)
 
-	# Pass 11b: per-substance viscosity. Reads u_vel/v_vel, writes u_temp/v_temp,
-	# then we copy temp back. Runs after gradient so the viscosity correction is
-	# part of the (current - saved) FLIP delta picked up by g2p.
+	# Pass 11b: extrapolate fluid velocities into adjacent air cells. Each pass
+	# extends the valid velocity field by 1 cell. This gives particles near the
+	# fluid surface valid grid velocities to gather from in g2p, smoothing out
+	# the boundary discontinuity. Run twice for a 2-cell extrapolation layer.
+	for i in range(2):
+		_dispatch(pipeline_extrapolate, uset_extrapolate, groups_grid_x, groups_grid_y)
+		rd.buffer_copy(buf_u_temp, buf_u_vel, 0, 0, u_size * 4)
+		rd.buffer_copy(buf_v_temp, buf_v_vel, 0, 0, v_size * 4)
+
+	# Pass 11c: per-substance viscosity. Reads u_vel/v_vel, writes u_temp/v_temp,
+	# then we copy temp back. Runs after gradient and extrapolation so the
+	# viscosity correction is part of the (current - saved) FLIP delta.
 	_dispatch(pipeline_viscosity, uset_viscosity, groups_grid_x, groups_grid_y)
 	rd.buffer_copy(buf_u_temp, buf_u_vel, 0, 0, u_size * 4)
 	rd.buffer_copy(buf_v_temp, buf_v_vel, 0, 0, v_size * 4)
@@ -308,16 +320,16 @@ func cleanup() -> void:
 	# Free pipelines
 	for p in [pipeline_clear_grid, pipeline_p2g, pipeline_normalize, pipeline_save_vel,
 			  pipeline_g2p, pipeline_advect, pipeline_classify, pipeline_density_correction,
-			  pipeline_viscosity, pipeline_wall_zero, pipeline_divergence, pipeline_jacobi,
-			  pipeline_gradient]:
+			  pipeline_viscosity, pipeline_extrapolate, pipeline_wall_zero,
+			  pipeline_divergence, pipeline_jacobi, pipeline_gradient]:
 		if p.is_valid():
 			rd.free_rid(p)
 
 	# Free shaders
 	for s in [shader_clear_grid, shader_p2g, shader_normalize, shader_save_vel,
 			  shader_g2p, shader_advect, shader_classify, shader_density_correction,
-			  shader_viscosity, shader_wall_zero, shader_divergence, shader_jacobi,
-			  shader_gradient]:
+			  shader_viscosity, shader_extrapolate, shader_wall_zero, shader_divergence,
+			  shader_jacobi, shader_gradient]:
 		if s.is_valid():
 			rd.free_rid(s)
 
@@ -402,8 +414,12 @@ func _compile_shaders() -> void:
 	shader_advect = _load("res://src/shaders/pflip_advect.glsl")
 	shader_density_correction = _load("res://src/shaders/pflip_density_correction.glsl")
 	shader_viscosity = _load("res://src/shaders/pflip_viscosity.glsl")
+	shader_extrapolate = _load("res://src/shaders/pflip_extrapolate.glsl")
+	# pflip_classify uses a higher density threshold than the grid solver's
+	# fluid_classify (sparse cells become AIR so falling streams aren't
+	# pressure-corrected).
+	shader_classify = _load("res://src/shaders/pflip_classify.glsl")
 	# Reused from the grid solver:
-	shader_classify = _load("res://src/shaders/fluid_classify.glsl")
 	shader_wall_zero = _load("res://src/shaders/fluid_wall_zero.glsl")
 	shader_divergence = _load("res://src/shaders/fluid_divergence.glsl")
 	shader_jacobi = _load("res://src/shaders/fluid_jacobi.glsl")
@@ -539,6 +555,17 @@ func _create_pipelines() -> void:
 		[5, buf_v_vel],
 		[6, buf_u_temp],
 		[7, buf_v_temp],
+	])
+
+	# extrapolate (PIC/FLIP only — extends fluid velocities into air cells)
+	pipeline_extrapolate = rd.compute_pipeline_create(shader_extrapolate)
+	uset_extrapolate = _build_uset(shader_extrapolate, [
+		[0, buf_params],
+		[1, buf_cell_type],
+		[2, buf_u_vel],
+		[3, buf_v_vel],
+		[4, buf_u_temp],
+		[5, buf_v_temp],
 	])
 
 	# jacobi (ping-pong)
