@@ -34,8 +34,8 @@ layout(set = 0, binding = 6, std430) restrict buffer PressureBuffer {
     float data[];
 } pressure;
 
-const float GRAVITY = 200.0;
-const float OVERRELAX = 1.9;
+const float GRAVITY = 50.0;   // In grid cells/s², not pixels.
+const float OVERRELAX = 1.0;  // Standard Jacobi (no over-relaxation — SOR > 1 is for sequential Gauss-Seidel only).
 
 bool is_valid(int x, int y) {
     if (x < 0 || x >= params.grid_width || y < 0 || y >= params.grid_height) return false;
@@ -72,7 +72,12 @@ void main() {
         int vi = v_idx(x, y + 1);
         if (y + 1 <= h) {
             v_vel.data[vi] += GRAVITY * params.delta_time;
+            // Clamp velocity to prevent instability.
+            v_vel.data[vi] = clamp(v_vel.data[vi], -100.0, 100.0);
         }
+        // Also clamp horizontal velocity.
+        u_vel.data[u_idx(x, y)] = clamp(u_vel.data[u_idx(x, y)], -100.0, 100.0);
+        u_vel.data[u_idx(x + 1, y)] = clamp(u_vel.data[u_idx(x + 1, y)], -100.0, 100.0);
     }
     else if (params.phase == 1) {
         // === JACOBI PRESSURE ITERATION ===
