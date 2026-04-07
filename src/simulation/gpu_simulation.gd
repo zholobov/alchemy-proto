@@ -7,6 +7,13 @@ var width: int
 var height: int
 var cell_count: int
 
+# Fluid subdivision
+var fluid_scale: int = 4
+var fluid_width: int
+var fluid_height: int
+var fluid_cell_count: int
+var buf_fluid_boundary: RID
+
 # GPU buffer RIDs
 var buf_params: RID
 var buf_cells: RID
@@ -40,9 +47,11 @@ var buf_u_velocity: RID
 var buf_v_velocity: RID
 var buf_pressure: RID
 
-# Fluid state
+# Fluid state (high-res and downsampled)
 var _fluid_density_readback: PackedFloat32Array
 var _fluid_substance_readback: PackedInt32Array
+var _fluid_density_grid: PackedFloat32Array  ## Downsampled to grid resolution.
+var _fluid_substance_grid: PackedInt32Array  ## Downsampled to grid resolution.
 var _has_fluid: bool = false
 const PRESSURE_ITERATIONS := 40
 
@@ -64,10 +73,14 @@ const SUBSTANCE_STRIDE := 12
 const MAX_SUBSTANCES := 16
 
 
-func setup(w: int, h: int, boundary_mask: PackedByteArray) -> void:
+func setup(w: int, h: int, boundary_mask: PackedByteArray, p_fluid_scale: int = 4) -> void:
 	width = w
 	height = h
 	cell_count = w * h
+	fluid_scale = p_fluid_scale
+	fluid_width = w * fluid_scale
+	fluid_height = h * fluid_scale
+	fluid_cell_count = fluid_width * fluid_height
 
 	rd = RenderingServer.create_local_rendering_device()
 	if not rd:
@@ -122,29 +135,40 @@ func _create_buffers(boundary_mask: PackedByteArray) -> void:
 	temps_out.fill(20.0)
 	buf_temps_out = rd.storage_buffer_create(cell_count * 4, temps_out.to_byte_array())
 
-	# Fluid buffers (density-based)
+	# Fluid buffers (density-based, at fluid_scale resolution)
 	var density_data := PackedFloat32Array()
-	density_data.resize(cell_count)
-	buf_fluid_density = rd.storage_buffer_create(cell_count * 4, density_data.to_byte_array())
-	buf_fluid_density_out = rd.storage_buffer_create(cell_count * 4, density_data.to_byte_array())
+	density_data.resize(fluid_cell_count)
+	buf_fluid_density = rd.storage_buffer_create(fluid_cell_count * 4, density_data.to_byte_array())
+	buf_fluid_density_out = rd.storage_buffer_create(fluid_cell_count * 4, density_data.to_byte_array())
 
 	var substance_data := PackedInt32Array()
-	substance_data.resize(cell_count)
-	buf_fluid_substance = rd.storage_buffer_create(cell_count * 4, substance_data.to_byte_array())
+	substance_data.resize(fluid_cell_count)
+	buf_fluid_substance = rd.storage_buffer_create(fluid_cell_count * 4, substance_data.to_byte_array())
 
-	var u_size: int = (width + 1) * height
+	# Fluid-resolution boundary (upscale from grid boundary)
+	var fluid_boundary_data := PackedInt32Array()
+	fluid_boundary_data.resize(fluid_cell_count)
+	for gy in range(height):
+		for gx in range(width):
+			var val: int = boundary_ints[gy * width + gx]
+			for fy in range(fluid_scale):
+				for fx in range(fluid_scale):
+					fluid_boundary_data[(gy * fluid_scale + fy) * fluid_width + gx * fluid_scale + fx] = val
+	buf_fluid_boundary = rd.storage_buffer_create(fluid_cell_count * 4, fluid_boundary_data.to_byte_array())
+
+	var u_size: int = (fluid_width + 1) * fluid_height
 	var u_data := PackedFloat32Array()
 	u_data.resize(u_size)
 	buf_u_velocity = rd.storage_buffer_create(u_size * 4, u_data.to_byte_array())
 
-	var v_size: int = width * (height + 1)
+	var v_size: int = fluid_width * (fluid_height + 1)
 	var v_data := PackedFloat32Array()
 	v_data.resize(v_size)
 	buf_v_velocity = rd.storage_buffer_create(v_size * 4, v_data.to_byte_array())
 
 	var press_data := PackedFloat32Array()
-	press_data.resize(cell_count)
-	buf_pressure = rd.storage_buffer_create(cell_count * 4, press_data.to_byte_array())
+	press_data.resize(fluid_cell_count)
+	buf_pressure = rd.storage_buffer_create(fluid_cell_count * 4, press_data.to_byte_array())
 
 	# Substance lookup table
 	var table_size := MAX_SUBSTANCES * SUBSTANCE_STRIDE * 4
@@ -304,7 +328,7 @@ func _create_fluid_pipeline() -> void:
 	var u_boundary := RDUniform.new()
 	u_boundary.uniform_type = RenderingDevice.UNIFORM_TYPE_STORAGE_BUFFER
 	u_boundary.binding = 1
-	u_boundary.add_id(buf_boundary)
+	u_boundary.add_id(buf_fluid_boundary)
 	uniforms.append(u_boundary)
 
 	var u_density_in := RDUniform.new()
@@ -347,20 +371,23 @@ func _create_fluid_pipeline() -> void:
 
 
 func _set_fluid_phase(phase: int, delta: float) -> void:
+	# Pass fluid-resolution dimensions to the shader.
 	var bytes := PackedByteArray()
 	bytes.resize(16)
-	bytes.encode_s32(0, width)
-	bytes.encode_s32(4, height)
+	bytes.encode_s32(0, fluid_width)
+	bytes.encode_s32(4, fluid_height)
 	bytes.encode_float(8, delta)
 	bytes.encode_s32(12, phase)
 	rd.buffer_update(buf_params, 0, 16, bytes)
 
 
 func _run_fluid_dispatch() -> void:
+	var fluid_groups_x: int = ceili(float(fluid_width) / 16.0)
+	var fluid_groups_y: int = ceili(float(fluid_height) / 16.0)
 	var compute_list := rd.compute_list_begin()
 	rd.compute_list_bind_compute_pipeline(compute_list, pipeline_fluid)
 	rd.compute_list_bind_uniform_set(compute_list, uniform_set_fluid, 0)
-	rd.compute_list_dispatch(compute_list, groups_x, groups_y, 1)
+	rd.compute_list_dispatch(compute_list, fluid_groups_x, fluid_groups_y, 1)
 	rd.compute_list_end()
 	rd.submit()
 	rd.sync()
@@ -386,12 +413,12 @@ func _dispatch_fluid(delta: float) -> void:
 
 	# Swap: copy density_out → density_in for next frame
 	var new_density := rd.buffer_get_data(buf_fluid_density_out)
-	rd.buffer_update(buf_fluid_density, 0, cell_count * 4, new_density)
+	rd.buffer_update(buf_fluid_density, 0, fluid_cell_count * 4, new_density)
 
 	# Reset pressure for next frame
 	var zeros_f := PackedFloat32Array()
-	zeros_f.resize(cell_count)
-	rd.buffer_update(buf_pressure, 0, cell_count * 4, zeros_f.to_byte_array())
+	zeros_f.resize(fluid_cell_count)
+	rd.buffer_update(buf_pressure, 0, fluid_cell_count * 4, zeros_f.to_byte_array())
 
 
 func step(delta: float) -> void:
@@ -448,12 +475,30 @@ func _readback() -> void:
 	var substance_bytes := rd.buffer_get_data(buf_fluid_substance)
 	_fluid_substance_readback = substance_bytes.to_int32_array()
 
-	# Update _has_fluid flag for next frame
+	# Downsample fluid to grid resolution for CPU mirror.
+	_fluid_density_grid.resize(cell_count)
+	_fluid_substance_grid.resize(cell_count)
 	_has_fluid = false
-	for i in range(_fluid_density_readback.size()):
-		if _fluid_density_readback[i] > 0.01:
-			_has_fluid = true
-			break
+	var inv_scale_sq := 1.0 / float(fluid_scale * fluid_scale)
+	for gy in range(height):
+		for gx in range(width):
+			var sum := 0.0
+			var best_sub := 0
+			var best_dens := 0.0
+			for fy in range(fluid_scale):
+				for fx in range(fluid_scale):
+					var fi: int = (gy * fluid_scale + fy) * fluid_width + gx * fluid_scale + fx
+					var d: float = _fluid_density_readback[fi]
+					sum += d
+					if d > best_dens:
+						best_dens = d
+						best_sub = _fluid_substance_readback[fi]
+			var avg := sum * inv_scale_sq
+			var gi: int = gy * width + gx
+			_fluid_density_grid[gi] = avg
+			_fluid_substance_grid[gi] = best_sub if avg > 0.05 else 0
+			if avg > 0.05:
+				_has_fluid = true
 
 
 func get_cells() -> PackedInt32Array:
@@ -465,11 +510,11 @@ func get_temperatures() -> PackedFloat32Array:
 
 
 func get_fluid_density() -> PackedFloat32Array:
-	return _fluid_density_readback
+	return _fluid_density_grid
 
 
 func get_fluid_substance() -> PackedInt32Array:
-	return _fluid_substance_readback
+	return _fluid_substance_grid
 
 
 func spawn_cells(positions: Array[Vector2i], substance_id: int) -> void:
@@ -512,20 +557,21 @@ func upload_temperatures(data: PackedFloat32Array) -> void:
 
 
 func spawn_fluid(positions: Array[Vector2i], substance_id: int) -> void:
+	## Spawn fluid at grid positions. Each grid cell fills a fluid_scale×fluid_scale block.
+	var density_byte := PackedByteArray()
+	density_byte.resize(4)
+	density_byte.encode_float(0, 1.0)
+	var sub_byte := PackedByteArray()
+	sub_byte.resize(4)
+	sub_byte.encode_s32(0, substance_id)
 	for pos in positions:
 		if pos.x < 0 or pos.x >= width or pos.y < 0 or pos.y >= height:
 			continue
-		var idx := pos.y * width + pos.x
-		# Write density = 1.0
-		var density_bytes := PackedByteArray()
-		density_bytes.resize(4)
-		density_bytes.encode_float(0, 1.0)
-		rd.buffer_update(buf_fluid_density, idx * 4, 4, density_bytes)
-		# Write substance ID
-		var sub_bytes := PackedByteArray()
-		sub_bytes.resize(4)
-		sub_bytes.encode_s32(0, substance_id)
-		rd.buffer_update(buf_fluid_substance, idx * 4, 4, sub_bytes)
+		for fy in range(fluid_scale):
+			for fx in range(fluid_scale):
+				var fi: int = (pos.y * fluid_scale + fy) * fluid_width + pos.x * fluid_scale + fx
+				rd.buffer_update(buf_fluid_density, fi * 4, 4, density_byte)
+				rd.buffer_update(buf_fluid_substance, fi * 4, 4, sub_byte)
 	_has_fluid = true
 
 
@@ -534,28 +580,30 @@ func clear_all() -> void:
 	zeros_int.resize(cell_count)
 	rd.buffer_update(buf_cells, 0, cell_count * 4, zeros_int.to_byte_array())
 
-	var zeros_f := PackedFloat32Array()
-	zeros_f.resize(cell_count)
-	rd.buffer_update(buf_fluid_density, 0, cell_count * 4, zeros_f.to_byte_array())
-	rd.buffer_update(buf_fluid_density_out, 0, cell_count * 4, zeros_f.to_byte_array())
-	rd.buffer_update(buf_fluid_substance, 0, cell_count * 4, zeros_int.to_byte_array())
+	var fluid_zeros_f := PackedFloat32Array()
+	fluid_zeros_f.resize(fluid_cell_count)
+	rd.buffer_update(buf_fluid_density, 0, fluid_cell_count * 4, fluid_zeros_f.to_byte_array())
+	rd.buffer_update(buf_fluid_density_out, 0, fluid_cell_count * 4, fluid_zeros_f.to_byte_array())
+	var fluid_zeros_int := PackedInt32Array()
+	fluid_zeros_int.resize(fluid_cell_count)
+	rd.buffer_update(buf_fluid_substance, 0, fluid_cell_count * 4, fluid_zeros_int.to_byte_array())
 
 	var temps := PackedFloat32Array()
 	temps.resize(cell_count)
 	temps.fill(20.0)
 	rd.buffer_update(buf_temperatures, 0, cell_count * 4, temps.to_byte_array())
 
-	var u_size: int = (width + 1) * height
+	var u_size: int = (fluid_width + 1) * fluid_height
 	var u_zeros := PackedFloat32Array()
 	u_zeros.resize(u_size)
 	rd.buffer_update(buf_u_velocity, 0, u_size * 4, u_zeros.to_byte_array())
-	var v_size: int = width * (height + 1)
+	var v_size: int = fluid_width * (fluid_height + 1)
 	var v_zeros := PackedFloat32Array()
 	v_zeros.resize(v_size)
 	rd.buffer_update(buf_v_velocity, 0, v_size * 4, v_zeros.to_byte_array())
 	var press_zeros := PackedFloat32Array()
-	press_zeros.resize(cell_count)
-	rd.buffer_update(buf_pressure, 0, cell_count * 4, press_zeros.to_byte_array())
+	press_zeros.resize(fluid_cell_count)
+	rd.buffer_update(buf_pressure, 0, fluid_cell_count * 4, press_zeros.to_byte_array())
 
 	_has_fluid = false
 	_readback()
