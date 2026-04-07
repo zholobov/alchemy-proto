@@ -1,18 +1,12 @@
 class_name GpuSimulation
 extends RefCounted
-## Manages GPU compute shaders for the alchemy simulation.
+## Manages GPU compute shaders for the particle grid and field simulation.
+## Fluid MAC simulation is handled by a separate FluidSolver class.
 
 var rd: RenderingDevice
 var width: int
 var height: int
 var cell_count: int
-
-# Fluid subdivision
-var fluid_scale: int = 4
-var fluid_width: int
-var fluid_height: int
-var fluid_cell_count: int
-var buf_fluid_boundary: RID
 
 # GPU buffer RIDs
 var buf_params: RID
@@ -34,27 +28,6 @@ var uniform_set_fields: RID
 # Fields ping-pong buffer
 var buf_temps_out: RID
 
-# Shader and pipeline RIDs — fluid
-var shader_fluid: RID
-var pipeline_fluid: RID
-var uniform_set_fluid: RID
-
-# Fluid buffers (density-based)
-var buf_fluid_density: RID
-var buf_fluid_density_out: RID
-var buf_fluid_substance: RID
-var buf_u_velocity: RID
-var buf_v_velocity: RID
-var buf_pressure: RID
-
-# Fluid state (high-res and downsampled)
-var _fluid_density_readback: PackedFloat32Array
-var _fluid_substance_readback: PackedInt32Array
-var _fluid_density_grid: PackedFloat32Array  ## Downsampled to grid resolution.
-var _fluid_substance_grid: PackedInt32Array  ## Downsampled to grid resolution.
-var _has_fluid: bool = false
-const PRESSURE_ITERATIONS := 20
-
 # Dispatch dimensions
 var groups_x: int
 var groups_y: int
@@ -73,14 +46,10 @@ const SUBSTANCE_STRIDE := 12
 const MAX_SUBSTANCES := 16
 
 
-func setup(w: int, h: int, boundary_mask: PackedByteArray, p_fluid_scale: int = 4) -> void:
+func setup(w: int, h: int, boundary_mask: PackedByteArray) -> void:
 	width = w
 	height = h
 	cell_count = w * h
-	fluid_scale = p_fluid_scale
-	fluid_width = w * fluid_scale
-	fluid_height = h * fluid_scale
-	fluid_cell_count = fluid_width * fluid_height
 
 	rd = RenderingServer.create_local_rendering_device()
 	if not rd:
@@ -100,7 +69,6 @@ func setup(w: int, h: int, boundary_mask: PackedByteArray, p_fluid_scale: int = 
 	_compile_shaders()
 	_create_particle_pipeline()
 	_create_fields_pipeline()
-	_create_fluid_pipeline()
 
 	print("GPU simulation initialized: %dx%d grid, dispatch %dx%d" % [width, height, groups_margolus_x, groups_margolus_y])
 
@@ -134,41 +102,6 @@ func _create_buffers(boundary_mask: PackedByteArray) -> void:
 	temps_out.resize(cell_count)
 	temps_out.fill(20.0)
 	buf_temps_out = rd.storage_buffer_create(cell_count * 4, temps_out.to_byte_array())
-
-	# Fluid buffers (density-based, at fluid_scale resolution)
-	var density_data := PackedFloat32Array()
-	density_data.resize(fluid_cell_count)
-	buf_fluid_density = rd.storage_buffer_create(fluid_cell_count * 4, density_data.to_byte_array())
-	buf_fluid_density_out = rd.storage_buffer_create(fluid_cell_count * 4, density_data.to_byte_array())
-
-	var substance_data := PackedInt32Array()
-	substance_data.resize(fluid_cell_count)
-	buf_fluid_substance = rd.storage_buffer_create(fluid_cell_count * 4, substance_data.to_byte_array())
-
-	# Fluid-resolution boundary (upscale from grid boundary)
-	var fluid_boundary_data := PackedInt32Array()
-	fluid_boundary_data.resize(fluid_cell_count)
-	for gy in range(height):
-		for gx in range(width):
-			var val: int = boundary_ints[gy * width + gx]
-			for fy in range(fluid_scale):
-				for fx in range(fluid_scale):
-					fluid_boundary_data[(gy * fluid_scale + fy) * fluid_width + gx * fluid_scale + fx] = val
-	buf_fluid_boundary = rd.storage_buffer_create(fluid_cell_count * 4, fluid_boundary_data.to_byte_array())
-
-	var u_size: int = (fluid_width + 1) * fluid_height
-	var u_data := PackedFloat32Array()
-	u_data.resize(u_size)
-	buf_u_velocity = rd.storage_buffer_create(u_size * 4, u_data.to_byte_array())
-
-	var v_size: int = fluid_width * (fluid_height + 1)
-	var v_data := PackedFloat32Array()
-	v_data.resize(v_size)
-	buf_v_velocity = rd.storage_buffer_create(v_size * 4, v_data.to_byte_array())
-
-	var press_data := PackedFloat32Array()
-	press_data.resize(fluid_cell_count)
-	buf_pressure = rd.storage_buffer_create(fluid_cell_count * 4, press_data.to_byte_array())
 
 	# Substance lookup table
 	var table_size := MAX_SUBSTANCES * SUBSTANCE_STRIDE * 4
@@ -218,15 +151,6 @@ func _compile_shaders() -> void:
 	shader_fields = rd.shader_create_from_spirv(fields_spirv)
 	if not shader_fields.is_valid():
 		push_error("Failed to compile fields_update shader")
-
-	var fluid_file := load("res://src/shaders/fluid_pressure.glsl") as RDShaderFile
-	if not fluid_file:
-		push_error("Failed to load fluid_pressure.glsl")
-		return
-	var fluid_spirv := fluid_file.get_spirv()
-	shader_fluid = rd.shader_create_from_spirv(fluid_spirv)
-	if not shader_fluid.is_valid():
-		push_error("Failed to compile fluid_pressure shader")
 
 
 func _create_particle_pipeline() -> void:
@@ -312,115 +236,6 @@ func _create_fields_pipeline() -> void:
 	uniform_set_fields = rd.uniform_set_create(uniforms, shader_fields, 0)
 
 
-func _create_fluid_pipeline() -> void:
-	pipeline_fluid = rd.compute_pipeline_create(shader_fluid)
-
-	# Bindings: 0=params, 1=boundary, 2=density_in, 3=density_out,
-	#           4=u_velocity, 5=v_velocity, 6=pressure, 7=substance
-	var uniforms: Array[RDUniform] = []
-
-	var u_params := RDUniform.new()
-	u_params.uniform_type = RenderingDevice.UNIFORM_TYPE_STORAGE_BUFFER
-	u_params.binding = 0
-	u_params.add_id(buf_params)
-	uniforms.append(u_params)
-
-	var u_boundary := RDUniform.new()
-	u_boundary.uniform_type = RenderingDevice.UNIFORM_TYPE_STORAGE_BUFFER
-	u_boundary.binding = 1
-	u_boundary.add_id(buf_fluid_boundary)
-	uniforms.append(u_boundary)
-
-	var u_density_in := RDUniform.new()
-	u_density_in.uniform_type = RenderingDevice.UNIFORM_TYPE_STORAGE_BUFFER
-	u_density_in.binding = 2
-	u_density_in.add_id(buf_fluid_density)
-	uniforms.append(u_density_in)
-
-	var u_density_out := RDUniform.new()
-	u_density_out.uniform_type = RenderingDevice.UNIFORM_TYPE_STORAGE_BUFFER
-	u_density_out.binding = 3
-	u_density_out.add_id(buf_fluid_density_out)
-	uniforms.append(u_density_out)
-
-	var u_uvel := RDUniform.new()
-	u_uvel.uniform_type = RenderingDevice.UNIFORM_TYPE_STORAGE_BUFFER
-	u_uvel.binding = 4
-	u_uvel.add_id(buf_u_velocity)
-	uniforms.append(u_uvel)
-
-	var u_vvel := RDUniform.new()
-	u_vvel.uniform_type = RenderingDevice.UNIFORM_TYPE_STORAGE_BUFFER
-	u_vvel.binding = 5
-	u_vvel.add_id(buf_v_velocity)
-	uniforms.append(u_vvel)
-
-	var u_pressure := RDUniform.new()
-	u_pressure.uniform_type = RenderingDevice.UNIFORM_TYPE_STORAGE_BUFFER
-	u_pressure.binding = 6
-	u_pressure.add_id(buf_pressure)
-	uniforms.append(u_pressure)
-
-	var u_substance := RDUniform.new()
-	u_substance.uniform_type = RenderingDevice.UNIFORM_TYPE_STORAGE_BUFFER
-	u_substance.binding = 7
-	u_substance.add_id(buf_fluid_substance)
-	uniforms.append(u_substance)
-
-	uniform_set_fluid = rd.uniform_set_create(uniforms, shader_fluid, 0)
-
-
-func _set_fluid_phase(phase: int, delta: float) -> void:
-	# Pass fluid-resolution dimensions to the shader.
-	var bytes := PackedByteArray()
-	bytes.resize(16)
-	bytes.encode_s32(0, fluid_width)
-	bytes.encode_s32(4, fluid_height)
-	bytes.encode_float(8, delta)
-	bytes.encode_s32(12, phase)
-	rd.buffer_update(buf_params, 0, 16, bytes)
-
-
-func _run_fluid_dispatch() -> void:
-	var fluid_groups_x: int = ceili(float(fluid_width) / 16.0)
-	var fluid_groups_y: int = ceili(float(fluid_height) / 16.0)
-	var compute_list := rd.compute_list_begin()
-	rd.compute_list_bind_compute_pipeline(compute_list, pipeline_fluid)
-	rd.compute_list_bind_uniform_set(compute_list, uniform_set_fluid, 0)
-	rd.compute_list_dispatch(compute_list, fluid_groups_x, fluid_groups_y, 1)
-	rd.compute_list_end()
-	rd.submit()
-	rd.sync()
-
-
-func _dispatch_fluid(delta: float) -> void:
-	# Phase 0: Apply gravity
-	_set_fluid_phase(0, delta)
-	_run_fluid_dispatch()
-
-	# Phase 1: Jacobi pressure iterations
-	for _iter in range(PRESSURE_ITERATIONS):
-		_set_fluid_phase(1, delta)
-		_run_fluid_dispatch()
-
-	# Phase 2: Zero wall velocities
-	_set_fluid_phase(2, delta)
-	_run_fluid_dispatch()
-
-	# Phase 3: Advect density (backward semi-Lagrangian)
-	_set_fluid_phase(3, delta)
-	_run_fluid_dispatch()
-
-	# Swap: copy density_out → density_in for next frame
-	var new_density := rd.buffer_get_data(buf_fluid_density_out)
-	rd.buffer_update(buf_fluid_density, 0, fluid_cell_count * 4, new_density)
-
-	# Reset pressure for next frame
-	var zeros_f := PackedFloat32Array()
-	zeros_f.resize(fluid_cell_count)
-	rd.buffer_update(buf_pressure, 0, fluid_cell_count * 4, zeros_f.to_byte_array())
-
-
 func step(delta: float) -> void:
 	## Run one simulation frame on the GPU.
 	# Dispatch particle update twice — Margolus pass 0 and pass 1
@@ -440,11 +255,6 @@ func step(delta: float) -> void:
 		rd.compute_list_end()
 		rd.submit()
 		rd.sync()
-
-	# Fluid MAC sim disabled — liquids use falling-sand rules in the particle grid.
-	# See docs for future MAC work.
-	# if _has_fluid:
-	# 	_dispatch_fluid(delta)
 
 	# Dispatch fields update (temperature diffusion)
 	var fields_list := rd.compute_list_begin()
@@ -470,37 +280,6 @@ func _readback() -> void:
 	var temps_bytes := rd.buffer_get_data(buf_temperatures)
 	_temps_readback = temps_bytes.to_float32_array()
 
-	var density_bytes := rd.buffer_get_data(buf_fluid_density)
-	_fluid_density_readback = density_bytes.to_float32_array()
-
-	var substance_bytes := rd.buffer_get_data(buf_fluid_substance)
-	_fluid_substance_readback = substance_bytes.to_int32_array()
-
-	# Downsample fluid to grid resolution for CPU mirror.
-	_fluid_density_grid.resize(cell_count)
-	_fluid_substance_grid.resize(cell_count)
-	_has_fluid = false
-	var inv_scale_sq := 1.0 / float(fluid_scale * fluid_scale)
-	for gy in range(height):
-		for gx in range(width):
-			var sum := 0.0
-			var best_sub := 0
-			var best_dens := 0.0
-			for fy in range(fluid_scale):
-				for fx in range(fluid_scale):
-					var fi: int = (gy * fluid_scale + fy) * fluid_width + gx * fluid_scale + fx
-					var d: float = _fluid_density_readback[fi]
-					sum += d
-					if d > best_dens:
-						best_dens = d
-						best_sub = _fluid_substance_readback[fi]
-			var avg := sum * inv_scale_sq
-			var gi: int = gy * width + gx
-			_fluid_density_grid[gi] = avg
-			_fluid_substance_grid[gi] = best_sub if avg > 0.01 else 0
-			if avg > 0.01:
-				_has_fluid = true
-
 
 func get_cells() -> PackedInt32Array:
 	return _cells_readback
@@ -508,14 +287,6 @@ func get_cells() -> PackedInt32Array:
 
 func get_temperatures() -> PackedFloat32Array:
 	return _temps_readback
-
-
-func get_fluid_density() -> PackedFloat32Array:
-	return _fluid_density_grid
-
-
-func get_fluid_substance() -> PackedInt32Array:
-	return _fluid_substance_grid
 
 
 func spawn_cells(positions: Array[Vector2i], substance_id: int) -> void:
@@ -557,56 +328,16 @@ func upload_temperatures(data: PackedFloat32Array) -> void:
 	rd.buffer_update(buf_temperatures, 0, data.size() * 4, data.to_byte_array())
 
 
-func spawn_fluid(positions: Array[Vector2i], substance_id: int) -> void:
-	## Spawn fluid at grid positions. Each grid cell fills a fluid_scale×fluid_scale block.
-	var density_byte := PackedByteArray()
-	density_byte.resize(4)
-	density_byte.encode_float(0, 1.0)
-	var sub_byte := PackedByteArray()
-	sub_byte.resize(4)
-	sub_byte.encode_s32(0, substance_id)
-	for pos in positions:
-		if pos.x < 0 or pos.x >= width or pos.y < 0 or pos.y >= height:
-			continue
-		for fy in range(fluid_scale):
-			for fx in range(fluid_scale):
-				var fi: int = (pos.y * fluid_scale + fy) * fluid_width + pos.x * fluid_scale + fx
-				rd.buffer_update(buf_fluid_density, fi * 4, 4, density_byte)
-				rd.buffer_update(buf_fluid_substance, fi * 4, 4, sub_byte)
-	_has_fluid = true
-
-
 func clear_all() -> void:
 	var zeros_int := PackedInt32Array()
 	zeros_int.resize(cell_count)
 	rd.buffer_update(buf_cells, 0, cell_count * 4, zeros_int.to_byte_array())
-
-	var fluid_zeros_f := PackedFloat32Array()
-	fluid_zeros_f.resize(fluid_cell_count)
-	rd.buffer_update(buf_fluid_density, 0, fluid_cell_count * 4, fluid_zeros_f.to_byte_array())
-	rd.buffer_update(buf_fluid_density_out, 0, fluid_cell_count * 4, fluid_zeros_f.to_byte_array())
-	var fluid_zeros_int := PackedInt32Array()
-	fluid_zeros_int.resize(fluid_cell_count)
-	rd.buffer_update(buf_fluid_substance, 0, fluid_cell_count * 4, fluid_zeros_int.to_byte_array())
 
 	var temps := PackedFloat32Array()
 	temps.resize(cell_count)
 	temps.fill(20.0)
 	rd.buffer_update(buf_temperatures, 0, cell_count * 4, temps.to_byte_array())
 
-	var u_size: int = (fluid_width + 1) * fluid_height
-	var u_zeros := PackedFloat32Array()
-	u_zeros.resize(u_size)
-	rd.buffer_update(buf_u_velocity, 0, u_size * 4, u_zeros.to_byte_array())
-	var v_size: int = fluid_width * (fluid_height + 1)
-	var v_zeros := PackedFloat32Array()
-	v_zeros.resize(v_size)
-	rd.buffer_update(buf_v_velocity, 0, v_size * 4, v_zeros.to_byte_array())
-	var press_zeros := PackedFloat32Array()
-	press_zeros.resize(fluid_cell_count)
-	rd.buffer_update(buf_pressure, 0, fluid_cell_count * 4, press_zeros.to_byte_array())
-
-	_has_fluid = false
 	_readback()
 
 
@@ -618,19 +349,10 @@ func cleanup() -> void:
 		rd.free_rid(pipeline_fields)
 		rd.free_rid(uniform_set_fields)
 		rd.free_rid(shader_fields)
-		rd.free_rid(pipeline_fluid)
-		rd.free_rid(uniform_set_fluid)
-		rd.free_rid(shader_fluid)
 		rd.free_rid(buf_params)
 		rd.free_rid(buf_cells)
 		rd.free_rid(buf_boundary)
 		rd.free_rid(buf_temperatures)
 		rd.free_rid(buf_temps_out)
 		rd.free_rid(buf_substance_table)
-		rd.free_rid(buf_fluid_density)
-		rd.free_rid(buf_fluid_density_out)
-		rd.free_rid(buf_fluid_substance)
-		rd.free_rid(buf_u_velocity)
-		rd.free_rid(buf_v_velocity)
-		rd.free_rid(buf_pressure)
 		rd.free()
