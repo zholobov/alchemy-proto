@@ -71,6 +71,7 @@ int v_idx(int x, int y) {
 }
 
 // Bilinear interpolation of density at fractional grid position.
+// Skips wall cells to prevent density loss at boundaries.
 float sample_density(float fx, float fy) {
     int w = params.grid_width;
     int h = params.grid_height;
@@ -87,14 +88,36 @@ float sample_density(float fx, float fy) {
     float sx = fx - float(x0);
     float sy = fy - float(y0);
 
-    float d00 = density_in.data[y0 * w + x0];
-    float d10 = density_in.data[y0 * w + x1];
-    float d01 = density_in.data[y1 * w + x0];
-    float d11 = density_in.data[y1 * w + x1];
+    // Bilinear weights.
+    float w00 = (1.0 - sx) * (1.0 - sy);
+    float w10 = sx * (1.0 - sy);
+    float w01 = (1.0 - sx) * sy;
+    float w11 = sx * sy;
 
-    float d0 = mix(d00, d10, sx);
-    float d1 = mix(d01, d11, sx);
-    return mix(d0, d1, sy);
+    // Mask out wall cells by zeroing their weights.
+    bool v00 = is_valid(x0, y0);
+    bool v10 = is_valid(x1, y0);
+    bool v01 = is_valid(x0, y1);
+    bool v11 = is_valid(x1, y1);
+
+    if (!v00) w00 = 0.0;
+    if (!v10) w10 = 0.0;
+    if (!v01) w01 = 0.0;
+    if (!v11) w11 = 0.0;
+
+    float total_w = w00 + w10 + w01 + w11;
+    if (total_w <= 0.0) return 0.0;
+
+    // Renormalize weights so they sum to 1 — preserves density.
+    float inv = 1.0 / total_w;
+    w00 *= inv; w10 *= inv; w01 *= inv; w11 *= inv;
+
+    float d00 = v00 ? density_in.data[y0 * w + x0] : 0.0;
+    float d10 = v10 ? density_in.data[y0 * w + x1] : 0.0;
+    float d01 = v01 ? density_in.data[y1 * w + x0] : 0.0;
+    float d11 = v11 ? density_in.data[y1 * w + x1] : 0.0;
+
+    return d00 * w00 + d10 * w10 + d01 * w01 + d11 * w11;
 }
 
 void main() {
