@@ -152,15 +152,12 @@ void main() {
         // Bilinearly interpolate density at source.
         float new_density = sample_density(src_x, src_y);
 
-        // Slight dissipation to prevent accumulation artifacts.
-        new_density *= 0.999;
-
         density_out.data[idx] = new_density;
 
         // Advect substance type using nearest-neighbor (IDs are discrete, can't interpolate).
         int src_xi = clamp(int(round(src_x)), 0, w - 1);
         int src_yi = clamp(int(round(src_y)), 0, h - 1);
-        if (new_density > 0.1) {
+        if (new_density > 0.01) {
             substance.data[idx] = substance.data[src_yi * w + src_xi];
         } else {
             substance.data[idx] = 0;
