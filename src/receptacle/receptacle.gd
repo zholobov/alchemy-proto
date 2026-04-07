@@ -142,13 +142,18 @@ func _draw() -> void:
 func sync_from_gpu() -> void:
 	var cells_data := gpu_sim.get_cells()
 	var temps_data := gpu_sim.get_temperatures()
-	var fluid_data := gpu_sim.get_fluid_markers()
+	var density_data := gpu_sim.get_fluid_density()
+	var substance_data := gpu_sim.get_fluid_substance()
 	for i in range(mini(cells_data.size(), grid.cells.size())):
 		grid.cells[i] = cells_data[i]
 	for i in range(mini(temps_data.size(), grid.temperatures.size())):
 		grid.temperatures[i] = temps_data[i]
-	for i in range(mini(fluid_data.size(), fluid.markers.size())):
-		fluid.markers[i] = fluid_data[i]
+	# Convert density-based fluid to int markers for CPU compatibility.
+	for i in range(mini(density_data.size(), fluid.markers.size())):
+		if density_data[i] > 0.3 and i < substance_data.size():
+			fluid.markers[i] = substance_data[i]
+		else:
+			fluid.markers[i] = 0
 
 
 func _exit_tree() -> void:
