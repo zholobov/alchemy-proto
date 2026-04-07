@@ -94,6 +94,7 @@ func setup(w: int, h: int, boundary_mask: PackedByteArray = PackedByteArray()) -
 func step(delta: float) -> void:
 	_update_params(delta)
 	_dispatch(pipeline_classify, uniform_set_classify)
+	_dispatch(pipeline_body_forces, uniform_set_body_forces)
 	_readback_density()
 
 
@@ -216,6 +217,7 @@ func _create_buffers(boundary_mask: PackedByteArray) -> void:
 
 func _compile_shaders() -> void:
 	shader_classify = _load_shader("res://src/shaders/fluid_classify.glsl")
+	shader_body_forces = _load_shader("res://src/shaders/fluid_body_forces.glsl")
 
 
 func _load_shader(path: String) -> RID:
@@ -237,6 +239,13 @@ func _create_pipelines() -> void:
 		[1, buf_density],
 		[2, buf_boundary],
 		[3, buf_cell_type],
+	])
+
+	pipeline_body_forces = rd.compute_pipeline_create(shader_body_forces)
+	uniform_set_body_forces = _build_uniform_set(shader_body_forces, [
+		[0, buf_params],
+		[1, buf_cell_type],
+		[2, buf_v_vel],
 	])
 
 
