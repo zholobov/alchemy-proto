@@ -18,7 +18,9 @@ layout(set = 0, binding = 2, std430) restrict buffer VVelocity {
     float data[];
 } v_vel;
 
+const int CELL_AIR = 0;
 const int CELL_FLUID = 1;
+const int CELL_WALL = 2;
 const float GRAVITY = 20.0;  // cells per second squared
 
 
@@ -34,12 +36,20 @@ void main() {
 
     if (x >= w || y >= h) return;
 
-    int idx = y * w + x;
-    if (cell_type.data[idx] != CELL_FLUID) return;
+    // Each cell is responsible for its TOP v-face at v_idx(x, y), which is the
+    // face between cell (x, y-1) above and cell (x, y) below. This ensures every
+    // interior v-face gets processed once, including the top face of the topmost
+    // fluid layer (which the previous "bottom-face only" approach missed).
+    int bot_ct = cell_type.data[y * w + x];
+    int top_ct = (y > 0) ? cell_type.data[(y - 1) * w + x] : CELL_AIR;
 
-    // Apply gravity to the v-velocity at the bottom face of this fluid cell.
-    if (y + 1 <= h) {
-        int vi = v_idx(x, y + 1, w);
-        v_vel.data[vi] += GRAVITY * params.delta_time;
+    // Apply gravity only where at least one side is fluid AND neither is wall.
+    // Faces bordering walls will be zeroed afterwards anyway, but applying gravity
+    // there first would bias divergence computation.
+    bool any_fluid = (bot_ct == CELL_FLUID) || (top_ct == CELL_FLUID);
+    bool any_wall = (bot_ct == CELL_WALL) || (top_ct == CELL_WALL);
+
+    if (any_fluid && !any_wall) {
+        v_vel.data[v_idx(x, y, w)] += GRAVITY * params.delta_time;
     }
 }

@@ -81,7 +81,7 @@ func _ready() -> void:
 
 	# Create dispenser.
 	dispenser = Dispenser.new()
-	dispenser.setup(receptacle.grid, receptacle.fluid, receptacle.global_position, Receptacle.CELL_SIZE, receptacle.gpu_sim)
+	dispenser.setup(receptacle.grid, receptacle.fluid, receptacle.global_position, Receptacle.CELL_SIZE, receptacle.gpu_sim, receptacle.fluid_solver)
 	add_child(dispenser)
 
 	# Create mediator.
@@ -166,8 +166,15 @@ func _process(delta: float) -> void:
 	# --- Simulation (spec order: rigid bodies, fluid, particles) ---
 	perf_monitor.begin_timing("GPU Sim")
 	receptacle.gpu_sim.step(delta)
-	receptacle.sync_from_gpu()
 	perf_monitor.end_timing("GPU Sim")
+
+	# --- GPU MAC Fluid (incompressible liquid simulation) ---
+	perf_monitor.begin_timing("Fluid Solver")
+	receptacle.fluid_solver.step(delta)
+	perf_monitor.end_timing("Fluid Solver")
+
+	# Sync all GPU state (particles + fluid) back to CPU for mediator/rendering.
+	receptacle.sync_from_gpu()
 
 	# --- CPU Mediator (sparse reactions only, fields run on GPU) ---
 	perf_monitor.begin_timing("Mediator")
@@ -230,12 +237,18 @@ func _on_substance_pouring(substance_id: int, pos: Vector2) -> void:
 			if dx * dx + dy * dy <= radius * radius:
 				positions.append(Vector2i(grid_pos.x + dx, grid_pos.y + dy))
 
-	# Liquids use falling-sand rules in the particle grid (MAC fluid disabled).
-	receptacle.gpu_sim.spawn_cells(positions, substance_id)
+	if substance.phase == SubstanceDef.Phase.LIQUID:
+		# Liquids spawn into the GPU MAC fluid solver (incompressible flow).
+		for p in positions:
+			receptacle.fluid_solver.spawn_fluid(p.x, p.y, 1.0, substance_id)
+	else:
+		# Powders and other phases use the particle grid.
+		receptacle.gpu_sim.spawn_cells(positions, substance_id)
 
 
 func _clear_receptacle() -> void:
 	receptacle.gpu_sim.clear_all()
+	receptacle.fluid_solver.clear()
 	receptacle.sync_from_gpu()
 	# Clear rigid bodies.
 	for body in receptacle.rigid_body_mgr._bodies.duplicate():
@@ -261,7 +274,12 @@ func _flood_fill() -> void:
 			var x: int = i % receptacle.grid.width
 			var y: int = floori(float(i) / float(receptacle.grid.width))
 			positions.append(Vector2i(x, y))
-	receptacle.gpu_sim.spawn_cells(positions, _selected_substance_id)
+
+	if substance.phase == SubstanceDef.Phase.LIQUID:
+		for p in positions:
+			receptacle.fluid_solver.spawn_fluid(p.x, p.y, 1.0, _selected_substance_id)
+	else:
+		receptacle.gpu_sim.spawn_cells(positions, _selected_substance_id)
 	game_log.log_event("Flood filled %d cells with %s" % [positions.size(), _selected_substance_name], Color.ORANGE)
 
 

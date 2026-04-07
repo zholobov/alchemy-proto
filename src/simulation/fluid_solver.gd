@@ -13,8 +13,9 @@ const CELL_AIR := 0
 const CELL_FLUID := 1
 const CELL_WALL := 2
 
-# Pressure solver iteration count
-const JACOBI_ITERATIONS := 80
+# Pressure solver iteration count (plain Jacobi with ping-pong).
+# Slow but numerically stable. Warm-started from previous frame's pressure.
+const JACOBI_ITERATIONS := 200
 
 # Buffers
 var buf_params: RID
@@ -62,6 +63,7 @@ var uniform_set_damping: RID
 
 # Readback
 var _density_readback: PackedFloat32Array
+var _substance_readback: PackedInt32Array
 var _u_readback: PackedFloat32Array
 var _v_readback: PackedFloat32Array
 var _divergence_readback: PackedFloat32Array
@@ -93,6 +95,9 @@ func setup(w: int, h: int, boundary_mask: PackedByteArray = PackedByteArray()) -
 
 
 func step(delta: float) -> void:
+	# Clamp dt to avoid instability from scene-load spikes (first frame can have
+	# delta of several hundred ms if the scene took time to load).
+	delta = clampf(delta, 0.0, 0.033)
 	_update_params(delta)
 
 	# Pass 1: Classify cells
@@ -101,26 +106,38 @@ func step(delta: float) -> void:
 	# Pass 2: Apply gravity
 	_dispatch(pipeline_body_forces, uniform_set_body_forces)
 
+	# Zero wall-adjacent velocities BEFORE divergence. Otherwise gravity-added
+	# velocities at wall faces make divergence appear balanced when physically
+	# fluid can't flow through walls, preventing pressure buildup.
+	_dispatch(pipeline_wall_zero, uniform_set_wall_zero)
+
 	# Pass 3: Compute divergence
 	_dispatch(pipeline_divergence, uniform_set_divergence)
 
-	# Reset pressure to 0 before Jacobi.
-	var zeros := PackedFloat32Array()
-	zeros.resize(cell_count)
-	rd.buffer_update(buf_pressure, 0, cell_count * 4, zeros.to_byte_array())
-	rd.buffer_update(buf_pressure_out, 0, cell_count * 4, zeros.to_byte_array())
+	# Warm start Jacobi: copy previous frame's pressure into pressure_out so
+	# ping-pong starts from the previous converged state. GPU copy (no CPU roundtrip).
+	rd.buffer_copy(buf_pressure, buf_pressure_out, 0, 0, cell_count * 4)
 
-	# Pass 4: Jacobi pressure iterations (ping-pong)
+	# Pass 4: Jacobi pressure iterations batched into a single compute list.
+	# ~200 dispatches in one submit replaces ~200 separate submit+sync cycles,
+	# which is the main performance bottleneck of the solver.
+	var compute_list := rd.compute_list_begin()
 	for i in range(JACOBI_ITERATIONS):
 		if i % 2 == 0:
-			_dispatch(pipeline_jacobi, uniform_set_jacobi_ab)  # pressure → pressure_out
+			rd.compute_list_bind_compute_pipeline(compute_list, pipeline_jacobi)
+			rd.compute_list_bind_uniform_set(compute_list, uniform_set_jacobi_ab, 0)
 		else:
-			_dispatch(pipeline_jacobi, uniform_set_jacobi_ba)  # pressure_out → pressure
+			rd.compute_list_bind_compute_pipeline(compute_list, pipeline_jacobi)
+			rd.compute_list_bind_uniform_set(compute_list, uniform_set_jacobi_ba, 0)
+		rd.compute_list_dispatch(compute_list, groups_x, groups_y, 1)
+		rd.compute_list_add_barrier(compute_list)
+	rd.compute_list_end()
+	rd.submit()
+	rd.sync()
 
-	# Ensure final pressure is in buf_pressure (gradient shader reads from there).
+	# Ensure final pressure is in buf_pressure (gradient reads from there).
 	if JACOBI_ITERATIONS % 2 == 1:
-		var out_data := rd.buffer_get_data(buf_pressure_out)
-		rd.buffer_update(buf_pressure, 0, cell_count * 4, out_data)
+		rd.buffer_copy(buf_pressure_out, buf_pressure, 0, 0, cell_count * 4)
 
 	# Pass 5: Subtract pressure gradient from velocities.
 	_dispatch(pipeline_gradient, uniform_set_gradient)
@@ -131,11 +148,9 @@ func step(delta: float) -> void:
 	# Pass 7: Advect density and substance.
 	_dispatch(pipeline_advect, uniform_set_advect)
 
-	# Swap density/substance: copy _out → in for next frame.
-	var new_density := rd.buffer_get_data(buf_density_out)
-	rd.buffer_update(buf_density, 0, cell_count * 4, new_density)
-	var new_substance := rd.buffer_get_data(buf_substance_out)
-	rd.buffer_update(buf_substance, 0, cell_count * 4, new_substance)
+	# Swap density/substance: copy _out → in for next frame (GPU copy).
+	rd.buffer_copy(buf_density_out, buf_density, 0, 0, cell_count * 4)
+	rd.buffer_copy(buf_substance_out, buf_substance, 0, 0, cell_count * 4)
 
 	# Pass 8: Velocity damping.
 	_dispatch(pipeline_damping, uniform_set_damping)
@@ -169,18 +184,41 @@ func clear() -> void:
 	rd.buffer_update(buf_v_vel, 0, v_size * 4, v_zeros.to_byte_array())
 
 
-func spawn_fluid(x: int, y: int, density: float = 1.0) -> void:
+func spawn_fluid(x: int, y: int, density: float = 1.0, substance_id: int = 0) -> void:
+	## Add density to a cell. Additive (not overwriting) so continuous pours
+	## accumulate over time, matching how pouring should physically work.
+	## Uses the readback density from the last frame to compute the new value.
 	if x < 0 or x >= width or y < 0 or y >= height:
 		return
 	var idx := y * width + x
-	var bytes := PackedByteArray()
-	bytes.resize(4)
-	bytes.encode_float(0, density)
-	rd.buffer_update(buf_density, idx * 4, 4, bytes)
+
+	# Read current density from last frame's readback (avoids GPU stall).
+	var existing: float = 0.0
+	if idx < _density_readback.size():
+		existing = _density_readback[idx]
+
+	# Cap density to prevent runaway accumulation.
+	var new_density: float = minf(existing + density, 4.0)
+
+	var d_bytes := PackedByteArray()
+	d_bytes.resize(4)
+	d_bytes.encode_float(0, new_density)
+	rd.buffer_update(buf_density, idx * 4, 4, d_bytes)
+
+	# Upload substance id (only if provided).
+	if substance_id > 0:
+		var s_bytes := PackedByteArray()
+		s_bytes.resize(4)
+		s_bytes.encode_s32(0, substance_id)
+		rd.buffer_update(buf_substance, idx * 4, 4, s_bytes)
 
 
 func get_density_readback() -> PackedFloat32Array:
 	return _density_readback
+
+
+func get_substance_readback() -> PackedInt32Array:
+	return _substance_readback
 
 
 func get_stats() -> Dictionary:
@@ -437,13 +475,13 @@ func _build_uniform_set(shader: RID, bindings: Array) -> RID:
 	return rd.uniform_set_create(uniforms, shader, 0)
 
 
-func _update_params(delta: float) -> void:
+func _update_params(delta: float, extra: int = 0) -> void:
 	var bytes := PackedByteArray()
 	bytes.resize(16)
 	bytes.encode_s32(0, width)
 	bytes.encode_s32(4, height)
 	bytes.encode_float(8, delta)
-	bytes.encode_s32(12, 0)
+	bytes.encode_s32(12, extra)
 	rd.buffer_update(buf_params, 0, 16, bytes)
 
 
@@ -460,6 +498,9 @@ func _dispatch(pipeline: RID, uniform_set: RID) -> void:
 func _readback_density() -> void:
 	var d_bytes := rd.buffer_get_data(buf_density)
 	_density_readback = d_bytes.to_float32_array()
+
+	var s_bytes := rd.buffer_get_data(buf_substance)
+	_substance_readback = s_bytes.to_int32_array()
 
 	var u_bytes := rd.buffer_get_data(buf_u_vel)
 	_u_readback = u_bytes.to_float32_array()

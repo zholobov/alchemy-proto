@@ -1,6 +1,9 @@
 #[compute]
 #version 450
 
+// Plain Jacobi pressure solver with ping-pong buffers. Converges slowly but
+// is numerically well-behaved and safe against race conditions.
+
 layout(local_size_x = 16, local_size_y = 16, local_size_z = 1) in;
 
 layout(set = 0, binding = 0, std430) restrict buffer Params {
@@ -35,8 +38,8 @@ float pressure_at(int x, int y, int w, int h, float current_pressure) {
     int idx = y * w + x;
     int ct = cell_type.data[idx];
     if (ct == CELL_AIR) return 0.0;      // Free surface: atmospheric pressure.
-    if (ct == CELL_WALL) return current_pressure;  // Wall: zero gradient.
-    return pressure_in.data[idx];  // Fluid: use current iteration value.
+    if (ct == CELL_WALL) return current_pressure;  // Wall: zero gradient BC.
+    return pressure_in.data[idx];
 }
 
 void main() {

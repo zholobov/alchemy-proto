@@ -118,8 +118,30 @@ void main() {
 
     density_out.data[idx] = sample_density(src_x, src_y, w, h);
 
-    // Nearest-neighbor substance sample.
-    int sx = clamp(int(round(src_x)), 0, w - 1);
-    int sy = clamp(int(round(src_y)), 0, h - 1);
-    substance_out.data[idx] = substance_in.data[sy * w + sx];
+    // Substance lookup: pick the densest of the 4 bilinear corners. Avoids the
+    // case where density bilinear-spreads from a fluid corner but nearest-neighbor
+    // rounding picks an empty corner with substance 0, leaving density > 0 but
+    // substance == 0 (which renders invisible because sync_from_gpu uses
+    // substance for marker color).
+    int sx0c = clamp(int(floor(src_x)), 0, w - 1);
+    int sy0c = clamp(int(floor(src_y)), 0, h - 1);
+    int sx1c = clamp(sx0c + 1, 0, w - 1);
+    int sy1c = clamp(sy0c + 1, 0, h - 1);
+
+    float c00 = density_in.data[sy0c * w + sx0c];
+    float c10 = density_in.data[sy0c * w + sx1c];
+    float c01 = density_in.data[sy1c * w + sx0c];
+    float c11 = density_in.data[sy1c * w + sx1c];
+
+    int picked_sub = substance_in.data[sy0c * w + sx0c];
+    float max_d = c00;
+    if (c10 > max_d) { max_d = c10; picked_sub = substance_in.data[sy0c * w + sx1c]; }
+    if (c01 > max_d) { max_d = c01; picked_sub = substance_in.data[sy1c * w + sx0c]; }
+    if (c11 > max_d) { max_d = c11; picked_sub = substance_in.data[sy1c * w + sx1c]; }
+
+    // Fall back to the destination's current substance if no source had one.
+    if (picked_sub == 0 && density_out.data[idx] > 0.0001) {
+        picked_sub = substance_in.data[idx];
+    }
+    substance_out.data[idx] = picked_sub;
 }

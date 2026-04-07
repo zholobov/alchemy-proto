@@ -17,6 +17,7 @@ var grid: ParticleGrid
 var fluid: FluidSim
 var rigid_body_mgr: RigidBodyMgr
 var gpu_sim: GpuSimulation
+var fluid_solver: FluidSolver
 
 ## Canonical oval parameters in pixel space — single source of truth.
 ## All three systems (grid boundary, collision, drawing) derive from these.
@@ -48,7 +49,14 @@ func _ready() -> void:
 	gpu_sim = GpuSimulation.new()
 	gpu_sim.setup(GRID_WIDTH, GRID_HEIGHT, grid.boundary)
 
-	# Create fluid simulation sharing the same boundary.
+	# Create GPU MAC fluid solver sharing the same boundary and grid dimensions.
+	# Liquids are simulated here (incompressible flow with pressure projection)
+	# while powders and solids remain in the particle grid.
+	fluid_solver = FluidSolver.new()
+	fluid_solver.setup(GRID_WIDTH, GRID_HEIGHT, grid.boundary)
+
+	# Create legacy CPU fluid simulation sharing the same boundary (used by
+	# renderers that haven't been switched to fluid_solver yet).
 	fluid = FluidSim.new(GRID_WIDTH, GRID_HEIGHT)
 	fluid.boundary = grid.boundary
 
@@ -147,7 +155,24 @@ func sync_from_gpu() -> void:
 	for i in range(mini(temps_data.size(), grid.temperatures.size())):
 		grid.temperatures[i] = temps_data[i]
 
+	# Populate the legacy fluid.markers array from the GPU fluid solver so
+	# renderers, fields, and the mediator see liquid cells. Threshold matches
+	# the solver's own internal classification threshold so the visible fluid
+	# shape matches what the solver is actually simulating — otherwise diffuse
+	# regions would be tracked but invisible.
+	if fluid_solver:
+		var density := fluid_solver.get_density_readback()
+		var substance := fluid_solver.get_substance_readback()
+		const FLUID_THRESHOLD := 0.001
+		for i in range(mini(density.size(), fluid.markers.size())):
+			if density[i] > FLUID_THRESHOLD:
+				fluid.markers[i] = substance[i] if i < substance.size() else 0
+			else:
+				fluid.markers[i] = 0
+
 
 func _exit_tree() -> void:
 	if gpu_sim:
 		gpu_sim.cleanup()
+	if fluid_solver:
+		fluid_solver.cleanup()

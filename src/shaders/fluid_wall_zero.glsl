@@ -22,6 +22,8 @@ layout(set = 0, binding = 3, std430) restrict buffer VVelocity {
     float data[];
 } v_vel;
 
+const int CELL_AIR = 0;
+const int CELL_FLUID = 1;
 const int CELL_WALL = 2;
 
 int u_idx(int x, int y, int w) {
@@ -40,12 +42,45 @@ void main() {
 
     if (x >= w || y >= h) return;
 
-    int idx = y * w + x;
-    if (cell_type.data[idx] != CELL_WALL) return;
+    int this_ct = cell_type.data[y * w + x];
 
-    // Zero all four faces of this wall cell.
-    u_vel.data[u_idx(x, y, w)] = 0.0;
-    u_vel.data[u_idx(x + 1, y, w)] = 0.0;
-    v_vel.data[v_idx(x, y, w)] = 0.0;
-    v_vel.data[v_idx(x, y + 1, w)] = 0.0;
+    // Each cell zeros its LEFT u-face (between (x-1, y) and (x, y)) and
+    // its TOP v-face (between (x, y-1) and (x, y)). Combined with the
+    // right-most column and bottom-most row being wall cells in the default
+    // boundary, every internal face gets covered.
+    //
+    // A face is "active" only if at least one adjacent cell is FLUID.
+    // Inactive faces are set to 0 to clear stale velocities from cells that
+    // transitioned from fluid to air.
+    //
+    // This replaces the older "zero wall cells' faces" approach with a
+    // stricter rule that also handles air-air and air-wall faces.
+
+    // Left u-face
+    int left_ct = (x > 0) ? cell_type.data[y * w + x - 1] : CELL_WALL;
+    if (this_ct != CELL_FLUID && left_ct != CELL_FLUID) {
+        u_vel.data[u_idx(x, y, w)] = 0.0;
+    }
+
+    // Top v-face
+    int top_ct = (y > 0) ? cell_type.data[(y - 1) * w + x] : CELL_WALL;
+    if (this_ct != CELL_FLUID && top_ct != CELL_FLUID) {
+        v_vel.data[v_idx(x, y, w)] = 0.0;
+    }
+
+    // Right u-face (only last column handles this, to cover the final column)
+    if (x == w - 1) {
+        // Face at u_idx(w, y, w). Right neighbor is out-of-grid (treat as WALL).
+        if (this_ct != CELL_FLUID) {
+            u_vel.data[u_idx(x + 1, y, w)] = 0.0;
+        }
+    }
+
+    // Bottom v-face (only last row handles this)
+    if (y == h - 1) {
+        // Face at v_idx(x, h, w). Bottom neighbor is out-of-grid (treat as WALL).
+        if (this_ct != CELL_FLUID) {
+            v_vel.data[v_idx(x, y + 1, w)] = 0.0;
+        }
+    }
 }
