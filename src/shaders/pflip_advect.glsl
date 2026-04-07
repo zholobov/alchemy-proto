@@ -34,13 +34,19 @@ layout(set = 0, binding = 3, std430) restrict buffer SubstanceProperties {
     float viscosity[];  // indexed by substance id
 } substance_props;
 
+layout(set = 0, binding = 4, std430) restrict buffer DensityField {
+    float data[];  // normalized: 1.0 = PARTICLES_PER_CELL particles in this cell
+} density_field;
+
 const float GRAVITY = 60.0;        // cells per second^2 (Tier 1 tuning)
 const float MAX_VELOCITY = 100.0;  // CFL: at 120 FPS, max move = 100/120 = 0.83 cells
 
 // Per-substance drag (linear velocity damping). drag = visc * DRAG_SCALE.
-// At dt = 1/60, water (visc=0.3) with DRAG_SCALE=2.0 gives 0.6 drag/sec
-// = ~0.01 velocity loss per frame = ~45% loss per second. Sluggish.
-const float DRAG_SCALE = 2.0;
+// Only applied when the particle is surrounded by other particles (in a pool),
+// so falling drops in air still free-fall under gravity. The density threshold
+// distinguishes "lone drop" (low density) from "pool member" (high density).
+const float DRAG_SCALE = 4.0;
+const float POOL_DENSITY_THRESHOLD = 0.5;  // half of target → 4 of 8 particles per cell
 
 bool is_wall(int cx, int cy, int w, int h) {
     if (cx < 0 || cx >= w || cy < 0 || cy >= h) return true;
@@ -60,15 +66,17 @@ void main() {
     // Apply gravity (only y component, downward in screen coords).
     p.vel.y += GRAVITY * params.delta_time;
 
-    // Per-substance drag: linear velocity damping. Looks up drag from the
-    // substance's viscosity field — substances with higher viscosity feel
-    // sluggish, low-viscosity substances feel fluid. drag = 0 means no drag
-    // (e.g., when substance_id = 0 or when viscosity is unset).
-    float drag = 0.0;
-    if (p.substance_id > 0) {
-        drag = substance_props.viscosity[p.substance_id] * DRAG_SCALE;
+    // Density-conditional drag: only apply drag when the particle is in a
+    // pool (high local density). Falling drops in air have only themselves
+    // in their cell (low density) and free-fall under gravity unimpeded.
+    int dcx = clamp(int(floor(p.pos.x)), 0, w - 1);
+    int dcy = clamp(int(floor(p.pos.y)), 0, h - 1);
+    float local_density = density_field.data[dcy * w + dcx];
+
+    if (p.substance_id > 0 && local_density >= POOL_DENSITY_THRESHOLD) {
+        float drag = substance_props.viscosity[p.substance_id] * DRAG_SCALE;
+        p.vel *= max(0.0, 1.0 - drag * params.delta_time);
     }
-    p.vel *= max(0.0, 1.0 - drag * params.delta_time);
 
     // CFL cap so a single huge velocity can't shoot a particle through a wall.
     float speed = length(p.vel);
