@@ -150,7 +150,7 @@ func sync_from_gpu() -> void:
 		grid.temperatures[i] = temps_data[i]
 	# Convert density-based fluid to int markers for CPU compatibility.
 	for i in range(mini(density_data.size(), fluid.markers.size())):
-		if density_data[i] > 0.05 and i < substance_data.size():
+		if density_data[i] > 0.01 and i < substance_data.size():
 			fluid.markers[i] = substance_data[i]
 		else:
 			fluid.markers[i] = 0

@@ -47,7 +47,19 @@ bool is_valid(int x, int y) {
 
 bool has_fluid(int x, int y) {
     if (!is_valid(x, y)) return false;
-    return density_in.data[y * params.grid_width + x] > 0.01;
+    return density_in.data[y * params.grid_width + x] > 0.001;
+}
+
+// Apply gravity/pressure even if neighbors have fluid (surface cells need this).
+bool near_fluid(int x, int y) {
+    if (!is_valid(x, y)) return false;
+    int w = params.grid_width;
+    if (density_in.data[y * w + x] > 0.001) return true;
+    if (is_valid(x - 1, y) && density_in.data[y * w + x - 1] > 0.001) return true;
+    if (is_valid(x + 1, y) && density_in.data[y * w + x + 1] > 0.001) return true;
+    if (is_valid(x, y - 1) && density_in.data[(y - 1) * w + x] > 0.001) return true;
+    if (is_valid(x, y + 1) && density_in.data[(y + 1) * w + x] > 0.001) return true;
+    return false;
 }
 
 int u_idx(int x, int y) {
@@ -97,7 +109,8 @@ void main() {
 
     if (params.phase == 0) {
         // === GRAVITY ===
-        if (!has_fluid(x, y)) return;
+        // Apply to cells near fluid so the surface also accelerates downward.
+        if (!near_fluid(x, y)) return;
         int vi = v_idx(x, y + 1);
         if (y + 1 <= h) {
             v_vel.data[vi] += GRAVITY * params.delta_time;
@@ -106,7 +119,8 @@ void main() {
     }
     else if (params.phase == 1) {
         // === JACOBI PRESSURE ITERATION ===
-        if (!has_fluid(x, y)) return;
+        // Run on cells near fluid so pressure propagates into empty neighbors.
+        if (!near_fluid(x, y)) return;
 
         float s_left   = is_valid(x - 1, y) ? 1.0 : 0.0;
         float s_right  = is_valid(x + 1, y) ? 1.0 : 0.0;

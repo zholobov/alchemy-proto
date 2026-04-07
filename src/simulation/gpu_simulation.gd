@@ -53,7 +53,7 @@ var _fluid_substance_readback: PackedInt32Array
 var _fluid_density_grid: PackedFloat32Array  ## Downsampled to grid resolution.
 var _fluid_substance_grid: PackedInt32Array  ## Downsampled to grid resolution.
 var _has_fluid: bool = false
-const PRESSURE_ITERATIONS := 40
+const PRESSURE_ITERATIONS := 20
 
 # Dispatch dimensions
 var groups_x: int
@@ -496,8 +496,8 @@ func _readback() -> void:
 			var avg := sum * inv_scale_sq
 			var gi: int = gy * width + gx
 			_fluid_density_grid[gi] = avg
-			_fluid_substance_grid[gi] = best_sub if avg > 0.05 else 0
-			if avg > 0.05:
+			_fluid_substance_grid[gi] = best_sub if avg > 0.01 else 0
+			if avg > 0.01:
 				_has_fluid = true
 
 
