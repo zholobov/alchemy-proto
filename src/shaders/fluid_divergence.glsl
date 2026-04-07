@@ -56,5 +56,7 @@ void main() {
     float v_top    = v_vel.data[v_idx(x, y, w)];
     float v_bottom = v_vel.data[v_idx(x, y + 1, w)];
 
-    divergence.data[idx] = (u_right - u_left) + (v_bottom - v_top);
+    // Divergence scaled by 1/dt so pressure solve produces results in correct units.
+    float div = (u_right - u_left) + (v_bottom - v_top);
+    divergence.data[idx] = div / params.delta_time;
 }

@@ -14,7 +14,7 @@ const CELL_FLUID := 1
 const CELL_WALL := 2
 
 # Pressure solver iteration count
-const JACOBI_ITERATIONS := 200
+const JACOBI_ITERATIONS := 80
 
 # Buffers
 var buf_params: RID

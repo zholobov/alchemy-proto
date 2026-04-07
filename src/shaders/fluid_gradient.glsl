@@ -57,8 +57,9 @@ void main() {
     if (cell_type.data[idx] != CELL_FLUID) return;
 
     float p_here = pressure.data[idx];
+    float dt = params.delta_time;
 
-    // Subtract pressure gradient from velocities at this cell's faces.
+    // Subtract pressure gradient (scaled by dt) from velocities at this cell's faces.
     // Update velocities at fluid-fluid AND fluid-air boundaries (air = atmospheric = 0).
     // Skip walls (velocity is zeroed separately).
 
@@ -67,7 +68,7 @@ void main() {
         int left_idx = idx - 1;
         if (cell_type.data[left_idx] != CELL_WALL) {
             float p_left = (cell_type.data[left_idx] == CELL_FLUID) ? pressure.data[left_idx] : 0.0;
-            u_vel.data[u_idx(x, y, w)] -= (p_here - p_left);
+            u_vel.data[u_idx(x, y, w)] -= (p_here - p_left) * dt;
         }
     }
     // Right face: between (x, y) and (x+1, y)
@@ -75,7 +76,7 @@ void main() {
         int right_idx = idx + 1;
         if (cell_type.data[right_idx] != CELL_WALL) {
             float p_right = (cell_type.data[right_idx] == CELL_FLUID) ? pressure.data[right_idx] : 0.0;
-            u_vel.data[u_idx(x + 1, y, w)] -= (p_right - p_here);
+            u_vel.data[u_idx(x + 1, y, w)] -= (p_right - p_here) * dt;
         }
     }
     // Top face: between (x, y-1) and (x, y)
@@ -83,7 +84,7 @@ void main() {
         int top_idx = idx - w;
         if (cell_type.data[top_idx] != CELL_WALL) {
             float p_top = (cell_type.data[top_idx] == CELL_FLUID) ? pressure.data[top_idx] : 0.0;
-            v_vel.data[v_idx(x, y, w)] -= (p_here - p_top);
+            v_vel.data[v_idx(x, y, w)] -= (p_here - p_top) * dt;
         }
     }
     // Bottom face: between (x, y) and (x, y+1)
@@ -91,7 +92,7 @@ void main() {
         int bottom_idx = idx + w;
         if (cell_type.data[bottom_idx] != CELL_WALL) {
             float p_bottom = (cell_type.data[bottom_idx] == CELL_FLUID) ? pressure.data[bottom_idx] : 0.0;
-            v_vel.data[v_idx(x, y + 1, w)] -= (p_bottom - p_here);
+            v_vel.data[v_idx(x, y + 1, w)] -= (p_bottom - p_here) * dt;
         }
     }
 }
