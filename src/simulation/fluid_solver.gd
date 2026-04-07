@@ -93,8 +93,37 @@ func setup(w: int, h: int, boundary_mask: PackedByteArray = PackedByteArray()) -
 
 func step(delta: float) -> void:
 	_update_params(delta)
+
+	# Pass 1: Classify cells
 	_dispatch(pipeline_classify, uniform_set_classify)
+
+	# Pass 2: Apply gravity
 	_dispatch(pipeline_body_forces, uniform_set_body_forces)
+
+	# Pass 3: Compute divergence
+	_dispatch(pipeline_divergence, uniform_set_divergence)
+
+	# Reset pressure to 0 before Jacobi.
+	var zeros := PackedFloat32Array()
+	zeros.resize(cell_count)
+	rd.buffer_update(buf_pressure, 0, cell_count * 4, zeros.to_byte_array())
+	rd.buffer_update(buf_pressure_out, 0, cell_count * 4, zeros.to_byte_array())
+
+	# Pass 4: Jacobi pressure iterations (ping-pong)
+	for i in range(JACOBI_ITERATIONS):
+		if i % 2 == 0:
+			_dispatch(pipeline_jacobi, uniform_set_jacobi_ab)  # pressure → pressure_out
+		else:
+			_dispatch(pipeline_jacobi, uniform_set_jacobi_ba)  # pressure_out → pressure
+
+	# Ensure final pressure is in buf_pressure (gradient shader reads from there).
+	if JACOBI_ITERATIONS % 2 == 1:
+		var out_data := rd.buffer_get_data(buf_pressure_out)
+		rd.buffer_update(buf_pressure, 0, cell_count * 4, out_data)
+
+	# Pass 5: Subtract pressure gradient from velocities.
+	_dispatch(pipeline_gradient, uniform_set_gradient)
+
 	_readback_density()
 
 
@@ -218,6 +247,9 @@ func _create_buffers(boundary_mask: PackedByteArray) -> void:
 func _compile_shaders() -> void:
 	shader_classify = _load_shader("res://src/shaders/fluid_classify.glsl")
 	shader_body_forces = _load_shader("res://src/shaders/fluid_body_forces.glsl")
+	shader_divergence = _load_shader("res://src/shaders/fluid_divergence.glsl")
+	shader_jacobi = _load_shader("res://src/shaders/fluid_jacobi.glsl")
+	shader_gradient = _load_shader("res://src/shaders/fluid_gradient.glsl")
 
 
 func _load_shader(path: String) -> RID:
@@ -246,6 +278,41 @@ func _create_pipelines() -> void:
 		[0, buf_params],
 		[1, buf_cell_type],
 		[2, buf_v_vel],
+	])
+
+	pipeline_divergence = rd.compute_pipeline_create(shader_divergence)
+	uniform_set_divergence = _build_uniform_set(shader_divergence, [
+		[0, buf_params],
+		[1, buf_cell_type],
+		[2, buf_u_vel],
+		[3, buf_v_vel],
+		[4, buf_divergence],
+	])
+
+	pipeline_jacobi = rd.compute_pipeline_create(shader_jacobi)
+	# Two uniform sets for ping-pong: A→B and B→A.
+	uniform_set_jacobi_ab = _build_uniform_set(shader_jacobi, [
+		[0, buf_params],
+		[1, buf_cell_type],
+		[2, buf_divergence],
+		[3, buf_pressure],
+		[4, buf_pressure_out],
+	])
+	uniform_set_jacobi_ba = _build_uniform_set(shader_jacobi, [
+		[0, buf_params],
+		[1, buf_cell_type],
+		[2, buf_divergence],
+		[3, buf_pressure_out],
+		[4, buf_pressure],
+	])
+
+	pipeline_gradient = rd.compute_pipeline_create(shader_gradient)
+	uniform_set_gradient = _build_uniform_set(shader_gradient, [
+		[0, buf_params],
+		[1, buf_cell_type],
+		[2, buf_pressure],
+		[3, buf_u_vel],
+		[4, buf_v_vel],
 	])
 
 
