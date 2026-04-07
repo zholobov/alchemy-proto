@@ -124,6 +124,21 @@ func step(delta: float) -> void:
 	# Pass 5: Subtract pressure gradient from velocities.
 	_dispatch(pipeline_gradient, uniform_set_gradient)
 
+	# Pass 6: Zero wall velocities.
+	_dispatch(pipeline_wall_zero, uniform_set_wall_zero)
+
+	# Pass 7: Advect density and substance.
+	_dispatch(pipeline_advect, uniform_set_advect)
+
+	# Swap density/substance: copy _out → in for next frame.
+	var new_density := rd.buffer_get_data(buf_density_out)
+	rd.buffer_update(buf_density, 0, cell_count * 4, new_density)
+	var new_substance := rd.buffer_get_data(buf_substance_out)
+	rd.buffer_update(buf_substance, 0, cell_count * 4, new_substance)
+
+	# Pass 8: Velocity damping.
+	_dispatch(pipeline_damping, uniform_set_damping)
+
 	_readback_density()
 
 
@@ -250,6 +265,9 @@ func _compile_shaders() -> void:
 	shader_divergence = _load_shader("res://src/shaders/fluid_divergence.glsl")
 	shader_jacobi = _load_shader("res://src/shaders/fluid_jacobi.glsl")
 	shader_gradient = _load_shader("res://src/shaders/fluid_gradient.glsl")
+	shader_wall_zero = _load_shader("res://src/shaders/fluid_wall_zero.glsl")
+	shader_advect = _load_shader("res://src/shaders/fluid_advect.glsl")
+	shader_damping = _load_shader("res://src/shaders/fluid_damping.glsl")
 
 
 func _load_shader(path: String) -> RID:
@@ -313,6 +331,33 @@ func _create_pipelines() -> void:
 		[2, buf_pressure],
 		[3, buf_u_vel],
 		[4, buf_v_vel],
+	])
+
+	pipeline_wall_zero = rd.compute_pipeline_create(shader_wall_zero)
+	uniform_set_wall_zero = _build_uniform_set(shader_wall_zero, [
+		[0, buf_params],
+		[1, buf_cell_type],
+		[2, buf_u_vel],
+		[3, buf_v_vel],
+	])
+
+	pipeline_advect = rd.compute_pipeline_create(shader_advect)
+	uniform_set_advect = _build_uniform_set(shader_advect, [
+		[0, buf_params],
+		[1, buf_cell_type],
+		[2, buf_density],
+		[3, buf_density_out],
+		[4, buf_substance],
+		[5, buf_substance_out],
+		[6, buf_u_vel],
+		[7, buf_v_vel],
+	])
+
+	pipeline_damping = rd.compute_pipeline_create(shader_damping)
+	uniform_set_damping = _build_uniform_set(shader_damping, [
+		[0, buf_params],
+		[1, buf_u_vel],
+		[2, buf_v_vel],
 	])
 
 
