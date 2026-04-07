@@ -19,6 +19,7 @@ var _texture: ImageTexture
 var _sprite: Sprite2D
 var _pixels: PackedByteArray
 var _boundary: PackedByteArray  # cached for renderer to restore background each frame
+var _water_id: int = 1           # SubstanceRegistry id for "Water"; resolved in _ready()
 var _paused: bool = false
 var _spawning: bool = false
 
@@ -52,6 +53,13 @@ func _ready() -> void:
 
 	solver = ParticleFluidSolver.new()
 	solver.setup(GRID_W, GRID_H, _boundary)
+	solver.upload_substance_properties()
+
+	# Resolve Water's substance id from the registry so the spawned particles
+	# pick up water's viscosity (0.3 in data/substances/water.tres).
+	var water_lookup := SubstanceRegistry.get_id("Water")
+	if water_lookup > 0:
+		_water_id = water_lookup
 
 	_image = Image.create(GRID_W, GRID_H, false, Image.FORMAT_RGBA8)
 	_texture = ImageTexture.create_from_image(_image)
@@ -150,7 +158,7 @@ func _spawn_at_mouse() -> void:
 				var jx := randf() * 0.8 + 0.1
 				var jy := randf() * 0.8 + 0.1
 				positions.append(Vector2(gx + dx + jx, gy + dy + jy))
-	solver.spawn_particles_batch(positions, 1)
+	solver.spawn_particles_batch(positions, _water_id)
 
 
 func _input(event: InputEvent) -> void:
@@ -188,7 +196,7 @@ func _scenario_center_blob() -> void:
 				var jx := randf() * 0.8 + 0.1
 				var jy := randf() * 0.8 + 0.1
 				positions.append(Vector2(cx + dx + jx, cy + dy + jy))
-	solver.spawn_particles_batch(positions, 1)
+	solver.spawn_particles_batch(positions, _water_id)
 
 
 func _scenario_top_stream() -> void:
@@ -201,7 +209,7 @@ func _scenario_top_stream() -> void:
 				var jx := randf() * 0.8 + 0.1
 				var jy := randf() * 0.8 + 0.1
 				positions.append(Vector2(cx + dx + jx, cy + dy + jy))
-	solver.spawn_particles_batch(positions, 1)
+	solver.spawn_particles_batch(positions, _water_id)
 
 
 func _scenario_column() -> void:
@@ -213,7 +221,7 @@ func _scenario_column() -> void:
 				var jx := randf() * 0.8 + 0.1
 				var jy := randf() * 0.8 + 0.1
 				positions.append(Vector2(cx + dx + jx, y + jy))
-	solver.spawn_particles_batch(positions, 1)
+	solver.spawn_particles_batch(positions, _water_id)
 
 
 func _exit_tree() -> void:

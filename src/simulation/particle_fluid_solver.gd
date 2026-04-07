@@ -30,6 +30,7 @@ extends RefCounted
 
 const MAX_PARTICLES := 262144  # 256k. ~6 MB. Enough to fill 200x150 grid at 8/cell.
 const PARTICLE_STRIDE := 24  # bytes: vec2 pos + vec2 vel + int substance + int alive
+const MAX_SUBSTANCES := 64   # size of the substance properties table
 const JACOBI_ITERATIONS := 80
 
 var rd: RenderingDevice
@@ -53,9 +54,12 @@ var buf_u_weights: RID
 var buf_v_weights: RID
 var buf_u_old: RID
 var buf_v_old: RID
+var buf_u_temp: RID  # scratch for viscosity (read u_vel, write u_temp, then copy back)
+var buf_v_temp: RID
 var buf_density_count: RID  # uint, particle count per cell
 var buf_density_float: RID  # float, normalized density (for classify)
 var buf_substance: RID
+var buf_substance_props: RID  # per-substance properties (viscosity, ...) indexed by id
 var buf_cell_type: RID
 var buf_divergence: RID
 var buf_pressure: RID
@@ -70,6 +74,7 @@ var shader_g2p: RID
 var shader_advect: RID
 var shader_classify: RID
 var shader_density_correction: RID
+var shader_viscosity: RID
 var shader_wall_zero: RID
 var shader_divergence: RID
 var shader_jacobi: RID
@@ -84,6 +89,7 @@ var pipeline_g2p: RID
 var pipeline_advect: RID
 var pipeline_classify: RID
 var pipeline_density_correction: RID
+var pipeline_viscosity: RID
 var pipeline_wall_zero: RID
 var pipeline_divergence: RID
 var pipeline_jacobi: RID
@@ -98,6 +104,7 @@ var uset_g2p: RID
 var uset_advect: RID
 var uset_classify: RID
 var uset_density_correction: RID
+var uset_viscosity: RID
 var uset_wall_zero: RID
 var uset_divergence: RID
 var uset_jacobi_ab: RID
@@ -189,7 +196,14 @@ func step(delta: float) -> void:
 	# Pass 11: apply pressure gradient to velocities
 	_dispatch(pipeline_gradient, uset_gradient, groups_grid_x, groups_grid_y)
 
-	# Pass 12: zero wall velocities (post-gradient)
+	# Pass 11b: per-substance viscosity. Reads u_vel/v_vel, writes u_temp/v_temp,
+	# then we copy temp back. Runs after gradient so the viscosity correction is
+	# part of the (current - saved) FLIP delta picked up by g2p.
+	_dispatch(pipeline_viscosity, uset_viscosity, groups_grid_x, groups_grid_y)
+	rd.buffer_copy(buf_u_temp, buf_u_vel, 0, 0, u_size * 4)
+	rd.buffer_copy(buf_v_temp, buf_v_vel, 0, 0, v_size * 4)
+
+	# Pass 12: zero wall velocities (post-gradient + post-viscosity)
 	_dispatch(pipeline_wall_zero, uset_wall_zero, groups_grid_x, groups_grid_y)
 
 	# Pass 13: gather corrected grid velocities back to particles (FLIP)
@@ -249,6 +263,20 @@ func clear() -> void:
 	_alive_count = 0
 
 
+func upload_substance_properties() -> void:
+	## Populate the substance properties buffer from SubstanceRegistry.
+	## Currently uploads viscosity. Should be called after setup() and any
+	## time the registry changes.
+	var bytes := PackedByteArray()
+	bytes.resize(MAX_SUBSTANCES * 4)
+	# Index 0 reserved (no substance) — leave as 0.0
+	for i in range(1, MAX_SUBSTANCES):
+		var sub := SubstanceRegistry.get_substance(i)
+		if sub:
+			bytes.encode_float(i * 4, sub.viscosity)
+	rd.buffer_update(buf_substance_props, 0, MAX_SUBSTANCES * 4, bytes)
+
+
 func get_density_readback() -> PackedFloat32Array:
 	return _density_readback
 
@@ -280,22 +308,24 @@ func cleanup() -> void:
 	# Free pipelines
 	for p in [pipeline_clear_grid, pipeline_p2g, pipeline_normalize, pipeline_save_vel,
 			  pipeline_g2p, pipeline_advect, pipeline_classify, pipeline_density_correction,
-			  pipeline_wall_zero, pipeline_divergence, pipeline_jacobi, pipeline_gradient]:
+			  pipeline_viscosity, pipeline_wall_zero, pipeline_divergence, pipeline_jacobi,
+			  pipeline_gradient]:
 		if p.is_valid():
 			rd.free_rid(p)
 
 	# Free shaders
 	for s in [shader_clear_grid, shader_p2g, shader_normalize, shader_save_vel,
 			  shader_g2p, shader_advect, shader_classify, shader_density_correction,
-			  shader_wall_zero, shader_divergence, shader_jacobi, shader_gradient]:
+			  shader_viscosity, shader_wall_zero, shader_divergence, shader_jacobi,
+			  shader_gradient]:
 		if s.is_valid():
 			rd.free_rid(s)
 
 	# Free buffers
 	for b in [buf_params, buf_particles, buf_boundary, buf_u_vel, buf_v_vel,
-			  buf_u_weights, buf_v_weights, buf_u_old, buf_v_old, buf_density_count,
-			  buf_density_float, buf_substance, buf_cell_type, buf_divergence,
-			  buf_pressure, buf_pressure_out]:
+			  buf_u_weights, buf_v_weights, buf_u_old, buf_v_old, buf_u_temp, buf_v_temp,
+			  buf_density_count, buf_density_float, buf_substance, buf_substance_props,
+			  buf_cell_type, buf_divergence, buf_pressure, buf_pressure_out]:
 		if b.is_valid():
 			rd.free_rid(b)
 
@@ -332,12 +362,21 @@ func _create_buffers(boundary_mask: PackedByteArray) -> void:
 	buf_u_vel = rd.storage_buffer_create(u_size * 4, u_zeros.to_byte_array())
 	buf_u_weights = rd.storage_buffer_create(u_size * 4, u_zeros.to_byte_array())
 	buf_u_old = rd.storage_buffer_create(u_size * 4, u_zeros.to_byte_array())
+	buf_u_temp = rd.storage_buffer_create(u_size * 4, u_zeros.to_byte_array())
 
 	var v_zeros := PackedFloat32Array()
 	v_zeros.resize(v_size)
 	buf_v_vel = rd.storage_buffer_create(v_size * 4, v_zeros.to_byte_array())
 	buf_v_weights = rd.storage_buffer_create(v_size * 4, v_zeros.to_byte_array())
 	buf_v_old = rd.storage_buffer_create(v_size * 4, v_zeros.to_byte_array())
+	buf_v_temp = rd.storage_buffer_create(v_size * 4, v_zeros.to_byte_array())
+
+	# Substance properties table (viscosity per substance id). Defaults to all
+	# zeros (no viscosity); upload_substance_properties() should be called by
+	# the host to populate it from the SubstanceRegistry.
+	var sub_props_zeros := PackedFloat32Array()
+	sub_props_zeros.resize(MAX_SUBSTANCES)
+	buf_substance_props = rd.storage_buffer_create(MAX_SUBSTANCES * 4, sub_props_zeros.to_byte_array())
 
 	# Density buffers (count as uint, float as float)
 	var cell_zeros_i := PackedInt32Array()
@@ -362,6 +401,7 @@ func _compile_shaders() -> void:
 	shader_g2p = _load("res://src/shaders/pflip_g2p.glsl")
 	shader_advect = _load("res://src/shaders/pflip_advect.glsl")
 	shader_density_correction = _load("res://src/shaders/pflip_density_correction.glsl")
+	shader_viscosity = _load("res://src/shaders/pflip_viscosity.glsl")
 	# Reused from the grid solver:
 	shader_classify = _load("res://src/shaders/fluid_classify.glsl")
 	shader_wall_zero = _load("res://src/shaders/fluid_wall_zero.glsl")
@@ -484,6 +524,19 @@ func _create_pipelines() -> void:
 		[1, buf_density_float],
 		[2, buf_cell_type],
 		[3, buf_divergence],
+	])
+
+	# viscosity (PIC/FLIP only — per-substance Laplacian smoothing of grid velocities)
+	pipeline_viscosity = rd.compute_pipeline_create(shader_viscosity)
+	uset_viscosity = _build_uset(shader_viscosity, [
+		[0, buf_params],
+		[1, buf_cell_type],
+		[2, buf_substance],
+		[3, buf_substance_props],
+		[4, buf_u_vel],
+		[5, buf_v_vel],
+		[6, buf_u_temp],
+		[7, buf_v_temp],
 	])
 
 	# jacobi (ping-pong)
