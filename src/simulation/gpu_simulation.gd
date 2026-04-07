@@ -27,6 +27,23 @@ var uniform_set_fields: RID
 # Fields ping-pong buffer
 var buf_temps_out: RID
 
+# Shader and pipeline RIDs — fluid
+var shader_fluid: RID
+var pipeline_fluid: RID
+var uniform_set_fluid: RID
+
+# Fluid buffers
+var buf_fluid_markers: RID
+var buf_fluid_markers_out: RID
+var buf_u_velocity: RID
+var buf_v_velocity: RID
+var buf_pressure: RID
+
+# Fluid state
+var _fluid_readback: PackedInt32Array
+var _has_fluid: bool = false
+const PRESSURE_ITERATIONS := 40
+
 # Dispatch dimensions
 var groups_x: int
 var groups_y: int
@@ -68,6 +85,7 @@ func setup(w: int, h: int, boundary_mask: PackedByteArray) -> void:
 	_compile_shaders()
 	_create_particle_pipeline()
 	_create_fields_pipeline()
+	_create_fluid_pipeline()
 
 	print("GPU simulation initialized: %dx%d grid, dispatch %dx%d" % [width, height, groups_margolus_x, groups_margolus_y])
 
@@ -101,6 +119,26 @@ func _create_buffers(boundary_mask: PackedByteArray) -> void:
 	temps_out.resize(cell_count)
 	temps_out.fill(20.0)
 	buf_temps_out = rd.storage_buffer_create(cell_count * 4, temps_out.to_byte_array())
+
+	# Fluid buffers
+	var fluid_data := PackedInt32Array()
+	fluid_data.resize(cell_count)
+	buf_fluid_markers = rd.storage_buffer_create(cell_count * 4, fluid_data.to_byte_array())
+	buf_fluid_markers_out = rd.storage_buffer_create(cell_count * 4, fluid_data.to_byte_array())
+
+	var u_size: int = (width + 1) * height
+	var u_data := PackedFloat32Array()
+	u_data.resize(u_size)
+	buf_u_velocity = rd.storage_buffer_create(u_size * 4, u_data.to_byte_array())
+
+	var v_size: int = width * (height + 1)
+	var v_data := PackedFloat32Array()
+	v_data.resize(v_size)
+	buf_v_velocity = rd.storage_buffer_create(v_size * 4, v_data.to_byte_array())
+
+	var press_data := PackedFloat32Array()
+	press_data.resize(cell_count)
+	buf_pressure = rd.storage_buffer_create(cell_count * 4, press_data.to_byte_array())
 
 	# Substance lookup table
 	var table_size := MAX_SUBSTANCES * SUBSTANCE_STRIDE * 4
@@ -150,6 +188,15 @@ func _compile_shaders() -> void:
 	shader_fields = rd.shader_create_from_spirv(fields_spirv)
 	if not shader_fields.is_valid():
 		push_error("Failed to compile fields_update shader")
+
+	var fluid_file := load("res://src/shaders/fluid_pressure.glsl") as RDShaderFile
+	if not fluid_file:
+		push_error("Failed to load fluid_pressure.glsl")
+		return
+	var fluid_spirv := fluid_file.get_spirv()
+	shader_fluid = rd.shader_create_from_spirv(fluid_spirv)
+	if not shader_fluid.is_valid():
+		push_error("Failed to compile fluid_pressure shader")
 
 
 func _create_particle_pipeline() -> void:
@@ -235,6 +282,110 @@ func _create_fields_pipeline() -> void:
 	uniform_set_fields = rd.uniform_set_create(uniforms, shader_fields, 0)
 
 
+func _create_fluid_pipeline() -> void:
+	pipeline_fluid = rd.compute_pipeline_create(shader_fluid)
+
+	# Bindings: 0=params, 1=boundary, 2=markers_in, 3=markers_out,
+	#           4=u_velocity, 5=v_velocity, 6=pressure
+	var uniforms: Array[RDUniform] = []
+
+	var u_params := RDUniform.new()
+	u_params.uniform_type = RenderingDevice.UNIFORM_TYPE_STORAGE_BUFFER
+	u_params.binding = 0
+	u_params.add_id(buf_params)
+	uniforms.append(u_params)
+
+	var u_boundary := RDUniform.new()
+	u_boundary.uniform_type = RenderingDevice.UNIFORM_TYPE_STORAGE_BUFFER
+	u_boundary.binding = 1
+	u_boundary.add_id(buf_boundary)
+	uniforms.append(u_boundary)
+
+	var u_markers_in := RDUniform.new()
+	u_markers_in.uniform_type = RenderingDevice.UNIFORM_TYPE_STORAGE_BUFFER
+	u_markers_in.binding = 2
+	u_markers_in.add_id(buf_fluid_markers)
+	uniforms.append(u_markers_in)
+
+	var u_markers_out := RDUniform.new()
+	u_markers_out.uniform_type = RenderingDevice.UNIFORM_TYPE_STORAGE_BUFFER
+	u_markers_out.binding = 3
+	u_markers_out.add_id(buf_fluid_markers_out)
+	uniforms.append(u_markers_out)
+
+	var u_uvel := RDUniform.new()
+	u_uvel.uniform_type = RenderingDevice.UNIFORM_TYPE_STORAGE_BUFFER
+	u_uvel.binding = 4
+	u_uvel.add_id(buf_u_velocity)
+	uniforms.append(u_uvel)
+
+	var u_vvel := RDUniform.new()
+	u_vvel.uniform_type = RenderingDevice.UNIFORM_TYPE_STORAGE_BUFFER
+	u_vvel.binding = 5
+	u_vvel.add_id(buf_v_velocity)
+	uniforms.append(u_vvel)
+
+	var u_pressure := RDUniform.new()
+	u_pressure.uniform_type = RenderingDevice.UNIFORM_TYPE_STORAGE_BUFFER
+	u_pressure.binding = 6
+	u_pressure.add_id(buf_pressure)
+	uniforms.append(u_pressure)
+
+	uniform_set_fluid = rd.uniform_set_create(uniforms, shader_fluid, 0)
+
+
+func _set_fluid_phase(phase: int, delta: float) -> void:
+	var bytes := PackedByteArray()
+	bytes.resize(16)
+	bytes.encode_s32(0, width)
+	bytes.encode_s32(4, height)
+	bytes.encode_float(8, delta)
+	bytes.encode_s32(12, phase)
+	rd.buffer_update(buf_params, 0, 16, bytes)
+
+
+func _run_fluid_dispatch() -> void:
+	var compute_list := rd.compute_list_begin()
+	rd.compute_list_bind_compute_pipeline(compute_list, pipeline_fluid)
+	rd.compute_list_bind_uniform_set(compute_list, uniform_set_fluid, 0)
+	rd.compute_list_dispatch(compute_list, groups_x, groups_y, 1)
+	rd.compute_list_end()
+	rd.submit()
+	rd.sync()
+
+
+func _dispatch_fluid(delta: float) -> void:
+	# Phase 0: Apply gravity
+	_set_fluid_phase(0, delta)
+	_run_fluid_dispatch()
+
+	# Phase 1: Jacobi pressure iterations
+	for _iter in range(PRESSURE_ITERATIONS):
+		_set_fluid_phase(1, delta)
+		_run_fluid_dispatch()
+
+	# Phase 2: Zero wall velocities
+	_set_fluid_phase(2, delta)
+	_run_fluid_dispatch()
+
+	# Phase 3: Advect markers — clear output first
+	var zeros := PackedInt32Array()
+	zeros.resize(cell_count)
+	rd.buffer_update(buf_fluid_markers_out, 0, cell_count * 4, zeros.to_byte_array())
+
+	_set_fluid_phase(3, delta)
+	_run_fluid_dispatch()
+
+	# Swap: copy markers_out → markers_in for next frame
+	var new_markers := rd.buffer_get_data(buf_fluid_markers_out)
+	rd.buffer_update(buf_fluid_markers, 0, cell_count * 4, new_markers)
+
+	# Reset pressure for next frame
+	var zeros_f := PackedFloat32Array()
+	zeros_f.resize(cell_count)
+	rd.buffer_update(buf_pressure, 0, cell_count * 4, zeros_f.to_byte_array())
+
+
 func step(delta: float) -> void:
 	## Run one simulation frame on the GPU.
 	# Dispatch particle update twice — Margolus pass 0 and pass 1
@@ -254,6 +405,10 @@ func step(delta: float) -> void:
 		rd.compute_list_end()
 		rd.submit()
 		rd.sync()
+
+	# Dispatch fluid sim (if fluid exists)
+	if _has_fluid:
+		_dispatch_fluid(delta)
 
 	# Dispatch fields update (temperature diffusion)
 	var fields_list := rd.compute_list_begin()
@@ -279,6 +434,16 @@ func _readback() -> void:
 	var temps_bytes := rd.buffer_get_data(buf_temperatures)
 	_temps_readback = temps_bytes.to_float32_array()
 
+	var fluid_bytes := rd.buffer_get_data(buf_fluid_markers)
+	_fluid_readback = fluid_bytes.to_int32_array()
+
+	# Update _has_fluid flag for next frame
+	_has_fluid = false
+	for i in range(_fluid_readback.size()):
+		if _fluid_readback[i] != 0:
+			_has_fluid = true
+			break
+
 
 func get_cells() -> PackedInt32Array:
 	return _cells_readback
@@ -286,6 +451,10 @@ func get_cells() -> PackedInt32Array:
 
 func get_temperatures() -> PackedFloat32Array:
 	return _temps_readback
+
+
+func get_fluid_markers() -> PackedInt32Array:
+	return _fluid_readback
 
 
 func spawn_cells(positions: Array[Vector2i], substance_id: int) -> void:
@@ -327,16 +496,43 @@ func upload_temperatures(data: PackedFloat32Array) -> void:
 	rd.buffer_update(buf_temperatures, 0, data.size() * 4, data.to_byte_array())
 
 
+func spawn_fluid(positions: Array[Vector2i], substance_id: int) -> void:
+	for pos in positions:
+		if pos.x < 0 or pos.x >= width or pos.y < 0 or pos.y >= height:
+			continue
+		var idx := pos.y * width + pos.x
+		var bytes := PackedByteArray()
+		bytes.resize(4)
+		bytes.encode_s32(0, substance_id)
+		rd.buffer_update(buf_fluid_markers, idx * 4, 4, bytes)
+	_has_fluid = true
+
+
 func clear_all() -> void:
 	var zeros_int := PackedInt32Array()
 	zeros_int.resize(cell_count)
 	rd.buffer_update(buf_cells, 0, cell_count * 4, zeros_int.to_byte_array())
+	rd.buffer_update(buf_fluid_markers, 0, cell_count * 4, zeros_int.to_byte_array())
+	rd.buffer_update(buf_fluid_markers_out, 0, cell_count * 4, zeros_int.to_byte_array())
 
 	var temps := PackedFloat32Array()
 	temps.resize(cell_count)
 	temps.fill(20.0)
 	rd.buffer_update(buf_temperatures, 0, cell_count * 4, temps.to_byte_array())
 
+	var zeros_f := PackedFloat32Array()
+	zeros_f.resize(cell_count)
+	var u_size: int = (width + 1) * height
+	var u_zeros := PackedFloat32Array()
+	u_zeros.resize(u_size)
+	rd.buffer_update(buf_u_velocity, 0, u_size * 4, u_zeros.to_byte_array())
+	var v_size: int = width * (height + 1)
+	var v_zeros := PackedFloat32Array()
+	v_zeros.resize(v_size)
+	rd.buffer_update(buf_v_velocity, 0, v_size * 4, v_zeros.to_byte_array())
+	rd.buffer_update(buf_pressure, 0, cell_count * 4, zeros_f.to_byte_array())
+
+	_has_fluid = false
 	_readback()
 
 
@@ -348,10 +544,18 @@ func cleanup() -> void:
 		rd.free_rid(pipeline_fields)
 		rd.free_rid(uniform_set_fields)
 		rd.free_rid(shader_fields)
+		rd.free_rid(pipeline_fluid)
+		rd.free_rid(uniform_set_fluid)
+		rd.free_rid(shader_fluid)
 		rd.free_rid(buf_params)
 		rd.free_rid(buf_cells)
 		rd.free_rid(buf_boundary)
 		rd.free_rid(buf_temperatures)
 		rd.free_rid(buf_temps_out)
 		rd.free_rid(buf_substance_table)
+		rd.free_rid(buf_fluid_markers)
+		rd.free_rid(buf_fluid_markers_out)
+		rd.free_rid(buf_u_velocity)
+		rd.free_rid(buf_v_velocity)
+		rd.free_rid(buf_pressure)
 		rd.free()

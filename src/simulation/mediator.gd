@@ -39,10 +39,12 @@ func update() -> void:
 
 
 func _build_occupied_list() -> void:
-	## Scan readback data once to find all occupied cells.
+	## Scan readback data once to find all occupied cells (particles + fluid).
 	_occupied_cells.clear()
 	for i in range(grid.cells.size()):
-		if grid.cells[i] != 0:
+		var has_particle := grid.cells[i] != 0
+		var has_fluid := fluid and i < fluid.markers.size() and fluid.markers[i] != 0
+		if has_particle or has_fluid:
 			var x: int = i % grid.width
 			var y: int = floori(float(i) / float(grid.width))
 			_occupied_cells.append(Vector2i(x, y))

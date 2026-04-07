@@ -49,7 +49,8 @@ uint hash_cell(uint x, uint y, uint frame) {
 }
 
 bool falls(int phase) {
-    return phase == PHASE_POWDER || phase == PHASE_LIQUID;
+    return phase == PHASE_POWDER;
+    // PHASE_LIQUID is handled by the MAC fluid shader, not falling-sand.
 }
 
 bool rises(int phase) {
@@ -117,15 +118,7 @@ void main() {
         }
     }
 
-    // LIQUID SPREADING
-    if (c01 != 0 && c11 == 0 && b01 && b11 && get_phase(c01) == PHASE_LIQUID && prefer_left) {
-        c11 = c01; c01 = 0;
-        float tmp = t11; t11 = t01; t01 = tmp;
-    }
-    if (c11 != 0 && c01 == 0 && b11 && b01 && get_phase(c11) == PHASE_LIQUID && !prefer_left) {
-        c01 = c11; c11 = 0;
-        float tmp = t01; t01 = t11; t11 = tmp;
-    }
+    // LIQUID phase is handled by the MAC fluid shader — not here.
 
     // GAS RISING
     if (c01 != 0 && c00 == 0 && b01 && b00 && rises(get_phase(c01))) {

@@ -142,10 +142,13 @@ func _draw() -> void:
 func sync_from_gpu() -> void:
 	var cells_data := gpu_sim.get_cells()
 	var temps_data := gpu_sim.get_temperatures()
+	var fluid_data := gpu_sim.get_fluid_markers()
 	for i in range(mini(cells_data.size(), grid.cells.size())):
 		grid.cells[i] = cells_data[i]
 	for i in range(mini(temps_data.size(), grid.temperatures.size())):
 		grid.temperatures[i] = temps_data[i]
+	for i in range(mini(fluid_data.size(), fluid.markers.size())):
+		fluid.markers[i] = fluid_data[i]
 
 
 func _exit_tree() -> void:

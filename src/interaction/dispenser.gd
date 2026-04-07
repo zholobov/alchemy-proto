@@ -9,15 +9,17 @@ var is_active: bool = false
 var _emit_timer: float = 0.0
 var _grid: ParticleGrid
 var _fluid: FluidSim
+var _gpu_sim: GpuSimulation
 var _receptacle_pos: Vector2
 var _cell_size: int
 
 var _cursor_indicator: ColorRect
 
 
-func setup(grid: ParticleGrid, fluid: FluidSim, receptacle_pos: Vector2, cell_size: int) -> void:
+func setup(grid: ParticleGrid, fluid: FluidSim, receptacle_pos: Vector2, cell_size: int, gpu_sim: GpuSimulation = null) -> void:
 	_grid = grid
 	_fluid = fluid
+	_gpu_sim = gpu_sim
 	_receptacle_pos = receptacle_pos
 	_cell_size = cell_size
 
@@ -67,10 +69,17 @@ func _emit_particle(screen_pos: Vector2) -> void:
 	if not sub:
 		return
 
-	if sub.phase == SubstanceDef.Phase.LIQUID:
-		_fluid.spawn_fluid(gx, gy, substance_id)
+	var pos := Vector2i(gx, gy)
+	if _gpu_sim:
+		if sub.phase == SubstanceDef.Phase.LIQUID:
+			_gpu_sim.spawn_fluid([pos], substance_id)
+		else:
+			_gpu_sim.spawn_cells([pos], substance_id)
 	else:
-		_grid.spawn_particle(gx, gy, substance_id)
+		if sub.phase == SubstanceDef.Phase.LIQUID:
+			_fluid.spawn_fluid(gx, gy, substance_id)
+		else:
+			_grid.spawn_particle(gx, gy, substance_id)
 
 
 func _input(event: InputEvent) -> void:
