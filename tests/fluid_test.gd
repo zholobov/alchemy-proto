@@ -65,8 +65,9 @@ func _process(_delta: float) -> void:
 
 	var stats := solver.get_stats()
 	_fps_label.text = "%d FPS %s" % [Engine.get_frames_per_second(), " [PAUSED]" if _paused else ""]
-	_stats_label.text = "Mass: %.1f  MaxVel: %.2f  MaxDiv: %.4f  FluidCells: %d" % [
-		stats["total_mass"], stats["max_velocity"], stats["max_divergence"], stats["fluid_cells"]
+	_stats_label.text = "Mass: %.1f  MaxVel: %.2f  MaxDiv: %.4f  FluidCells: %d  P: [%.2f, %.2f]" % [
+		stats["total_mass"], stats["max_velocity"], stats["max_divergence"], stats["fluid_cells"],
+		stats.get("min_pressure", 0.0), stats.get("max_pressure", 0.0)
 	]
 
 	_render_density()

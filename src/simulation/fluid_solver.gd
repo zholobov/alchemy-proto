@@ -65,6 +65,7 @@ var _density_readback: PackedFloat32Array
 var _u_readback: PackedFloat32Array
 var _v_readback: PackedFloat32Array
 var _divergence_readback: PackedFloat32Array
+var _pressure_readback: PackedFloat32Array
 
 # Dispatch groups
 var groups_x: int
@@ -203,11 +204,21 @@ func get_stats() -> Dictionary:
 		if absf(d) > max_div:
 			max_div = absf(d)
 
+	var max_pressure := 0.0
+	var min_pressure := 0.0
+	for p in _pressure_readback:
+		if p > max_pressure:
+			max_pressure = p
+		if p < min_pressure:
+			min_pressure = p
+
 	return {
 		"total_mass": total_mass,
 		"max_velocity": max_vel,
 		"max_divergence": max_div,
 		"fluid_cells": fluid_cells,
+		"max_pressure": max_pressure,
+		"min_pressure": min_pressure,
 	}
 
 
@@ -458,3 +469,6 @@ func _readback_density() -> void:
 
 	var div_bytes := rd.buffer_get_data(buf_divergence)
 	_divergence_readback = div_bytes.to_float32_array()
+
+	var press_bytes := rd.buffer_get_data(buf_pressure)
+	_pressure_readback = press_bytes.to_float32_array()
