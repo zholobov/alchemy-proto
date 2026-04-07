@@ -55,10 +55,10 @@ layout(set = 0, binding = 7, std430) restrict buffer VVelOut {
 const int CELL_FLUID = 1;
 const int CELL_WALL = 2;
 
-// Global multiplier on top of per-substance viscosity. Stay below 0.25 to
-// avoid the explicit-Euler diffusion stability limit (ν * dt * 4 ≤ 1 for a
-// 5-point Laplacian on a unit grid).
-const float VISCOSITY_SCALE = 0.5;
+// Global multiplier on top of per-substance viscosity. Stability limit for
+// explicit-Euler diffusion is (ν * SCALE * dt) < 0.25. At 60 FPS (dt ≈ 0.017)
+// this means ν * SCALE < ~15. Water viscosity = 0.3, so SCALE up to ~50 is safe.
+const float VISCOSITY_SCALE = 10.0;
 
 // Average the viscosities of two adjacent cells. Returns 0 if neither side
 // has a fluid substance (no diffusion across air-only or wall-only faces).

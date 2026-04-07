@@ -487,6 +487,7 @@ func _create_pipelines() -> void:
 		[0, buf_params],
 		[1, buf_particles],
 		[2, buf_boundary],
+		[3, buf_substance_props],
 	])
 
 	# classify (reuses fluid_classify.glsl)

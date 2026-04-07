@@ -30,9 +30,17 @@ layout(set = 0, binding = 2, std430) restrict buffer BoundaryBuffer {
     int data[];  // 1 = interior, 0 = wall
 } boundary;
 
+layout(set = 0, binding = 3, std430) restrict buffer SubstanceProperties {
+    float viscosity[];  // indexed by substance id
+} substance_props;
+
 const float GRAVITY = 60.0;        // cells per second^2 (Tier 1 tuning)
-const float DAMPING = 1.0;         // disabled — let swirls survive
 const float MAX_VELOCITY = 100.0;  // CFL: at 120 FPS, max move = 100/120 = 0.83 cells
+
+// Per-substance drag (linear velocity damping). drag = visc * DRAG_SCALE.
+// At dt = 1/60, water (visc=0.3) with DRAG_SCALE=2.0 gives 0.6 drag/sec
+// = ~0.01 velocity loss per frame = ~45% loss per second. Sluggish.
+const float DRAG_SCALE = 2.0;
 
 bool is_wall(int cx, int cy, int w, int h) {
     if (cx < 0 || cx >= w || cy < 0 || cy >= h) return true;
@@ -52,8 +60,15 @@ void main() {
     // Apply gravity (only y component, downward in screen coords).
     p.vel.y += GRAVITY * params.delta_time;
 
-    // Damping (very gentle so swirls survive).
-    p.vel *= DAMPING;
+    // Per-substance drag: linear velocity damping. Looks up drag from the
+    // substance's viscosity field — substances with higher viscosity feel
+    // sluggish, low-viscosity substances feel fluid. drag = 0 means no drag
+    // (e.g., when substance_id = 0 or when viscosity is unset).
+    float drag = 0.0;
+    if (p.substance_id > 0) {
+        drag = substance_props.viscosity[p.substance_id] * DRAG_SCALE;
+    }
+    p.vel *= max(0.0, 1.0 - drag * params.delta_time);
 
     // CFL cap so a single huge velocity can't shoot a particle through a wall.
     float speed = length(p.vel);
