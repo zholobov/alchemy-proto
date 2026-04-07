@@ -214,7 +214,41 @@ func get_stats() -> Dictionary:
 func cleanup() -> void:
 	if not rd:
 		return
-	# Placeholder — filled in Task 10
+
+	# Free pipelines
+	rd.free_rid(pipeline_classify)
+	rd.free_rid(pipeline_body_forces)
+	rd.free_rid(pipeline_divergence)
+	rd.free_rid(pipeline_jacobi)
+	rd.free_rid(pipeline_gradient)
+	rd.free_rid(pipeline_wall_zero)
+	rd.free_rid(pipeline_advect)
+	rd.free_rid(pipeline_damping)
+
+	# Free shaders
+	rd.free_rid(shader_classify)
+	rd.free_rid(shader_body_forces)
+	rd.free_rid(shader_divergence)
+	rd.free_rid(shader_jacobi)
+	rd.free_rid(shader_gradient)
+	rd.free_rid(shader_wall_zero)
+	rd.free_rid(shader_advect)
+	rd.free_rid(shader_damping)
+
+	# Free buffers
+	rd.free_rid(buf_params)
+	rd.free_rid(buf_density)
+	rd.free_rid(buf_density_out)
+	rd.free_rid(buf_substance)
+	rd.free_rid(buf_substance_out)
+	rd.free_rid(buf_u_vel)
+	rd.free_rid(buf_v_vel)
+	rd.free_rid(buf_cell_type)
+	rd.free_rid(buf_boundary)
+	rd.free_rid(buf_divergence)
+	rd.free_rid(buf_pressure)
+	rd.free_rid(buf_pressure_out)
+
 	rd.free()
 
 
