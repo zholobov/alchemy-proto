@@ -14,11 +14,11 @@ var pressure_threshold: float = 100.0
 var wall_conductivity: float = 0.05
 
 var grid: ParticleGrid
-var fluid: FluidSim
+## CPU-side liquid state from the PIC/FLIP solver readback. Populated each
+## frame by sync_from_gpu(). Read by renderers, fields, and mediator.
+var liquid_readback: LiquidReadback
 var rigid_body_mgr: RigidBodyMgr
 var gpu_sim: GpuSimulation
-# experiment/pic-flip: replaced grid-based FluidSolver with particle-based
-# solver. The field name stays the same so callers don't need to change.
 var fluid_solver: ParticleFluidSolver
 
 ## Canonical oval parameters in pixel space — single source of truth.
@@ -59,10 +59,8 @@ func _ready() -> void:
 	fluid_solver.setup(GRID_WIDTH, GRID_HEIGHT, grid.boundary)
 	fluid_solver.upload_substance_properties()
 
-	# Create legacy CPU fluid simulation sharing the same boundary (used by
-	# renderers that haven't been switched to fluid_solver yet).
-	fluid = FluidSim.new(GRID_WIDTH, GRID_HEIGHT)
-	fluid.boundary = grid.boundary
+	# CPU-side mirror of the liquid solver state, rebuilt each frame.
+	liquid_readback = LiquidReadback.new(GRID_WIDTH, GRID_HEIGHT)
 
 	# Create rigid body manager.
 	rigid_body_mgr = RigidBodyMgr.new()
@@ -108,7 +106,7 @@ func _ready() -> void:
 
 
 func setup_rigid_bodies() -> void:
-	rigid_body_mgr.setup(grid, fluid, global_position, CELL_SIZE)
+	rigid_body_mgr.setup(grid, global_position, CELL_SIZE)
 
 
 func get_screen_size() -> Vector2:
@@ -151,6 +149,13 @@ func _draw() -> void:
 	draw_line(Vector2(-8, -2), Vector2(w + 8, -2), rim_color, rim_width + 4)
 
 
+## Density threshold below which a cell is considered empty for rendering
+## and mediator purposes. Renderers scale alpha by density so the fade-out
+## is visual, not a hard cutoff — this threshold just drops cells with
+## only a handful of stray particles that would otherwise flicker.
+const LIQUID_VISIBLE_THRESHOLD := 0.005
+
+
 func sync_from_gpu() -> void:
 	var cells_data := gpu_sim.get_cells()
 	var temps_data := gpu_sim.get_temperatures()
@@ -159,23 +164,20 @@ func sync_from_gpu() -> void:
 	for i in range(mini(temps_data.size(), grid.temperatures.size())):
 		grid.temperatures[i] = temps_data[i]
 
-	# Populate the legacy fluid.markers and fluid.densities arrays from the GPU
-	# fluid solver. Renderers use markers (substance id) to pick a color and
-	# densities to scale alpha — thinner cells render more translucent. The
-	# marker threshold is low so we don't accidentally drop legitimate cells
-	# (the renderer's alpha-by-density makes the haze fade out visually
-	# instead of being a hard cutoff).
+	# Populate liquid_readback from the PIC/FLIP solver's GPU readback.
+	# Consumers (renderers, fields, mediator) read from liquid_readback.
 	if fluid_solver:
 		var density := fluid_solver.get_density_readback()
 		var substance := fluid_solver.get_substance_readback()
-		const VISIBLE_THRESHOLD := 0.005
-		for i in range(mini(density.size(), fluid.markers.size())):
-			if density[i] > VISIBLE_THRESHOLD:
-				fluid.markers[i] = substance[i] if i < substance.size() else 0
-				fluid.densities[i] = density[i]
+		var markers := liquid_readback.markers
+		var densities := liquid_readback.densities
+		for i in range(mini(density.size(), markers.size())):
+			if density[i] > LIQUID_VISIBLE_THRESHOLD:
+				markers[i] = substance[i] if i < substance.size() else 0
+				densities[i] = density[i]
 			else:
-				fluid.markers[i] = 0
-				fluid.densities[i] = 0.0
+				markers[i] = 0
+				densities[i] = 0.0
 
 
 func _exit_tree() -> void:

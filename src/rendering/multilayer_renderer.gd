@@ -5,7 +5,7 @@ extends RendererBase
 
 var grid: ParticleGrid
 var cell_size: int = 4
-var fluid: FluidSim
+var liquid: LiquidReadback
 
 # Per-layer data images
 var _powder_image: Image
@@ -33,10 +33,10 @@ var _color_cache: PackedColorArray
 var _phase_cache: PackedInt32Array
 
 
-func setup(p_grid: ParticleGrid, p_cell_size: int = 4, p_fluid: FluidSim = null) -> void:
+func setup(p_grid: ParticleGrid, p_cell_size: int = 4, p_liquid: LiquidReadback = null) -> void:
 	grid = p_grid
 	cell_size = p_cell_size
-	fluid = p_fluid
+	liquid = p_liquid
 
 	var w := grid.width
 	var h := grid.height
@@ -144,7 +144,7 @@ func render() -> void:
 			continue
 
 		var substance_id: int = grid.cells[i]
-		var fluid_id: int = fluid.markers[i] if fluid else 0
+		var fluid_id: int = liquid.markers[i] if liquid else 0
 
 		if fluid_id > 0 and fluid_id < _phase_cache.size():
 			var phase: int = _phase_cache[fluid_id]

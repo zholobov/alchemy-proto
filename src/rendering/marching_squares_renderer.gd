@@ -5,7 +5,7 @@ extends RendererBase
 
 var grid: ParticleGrid
 var cell_size: int = 4
-var fluid: FluidSim
+var liquid: LiquidReadback
 
 var _density: PackedFloat32Array
 var _color_cache: PackedColorArray
@@ -15,10 +15,10 @@ const OUTLINE_COLOR := Color(0.2, 0.18, 0.15, 0.6)
 const OUTLINE_WIDTH := 1.5
 
 
-func setup(p_grid: ParticleGrid, p_cell_size: int = 4, p_fluid: FluidSim = null) -> void:
+func setup(p_grid: ParticleGrid, p_cell_size: int = 4, p_liquid: LiquidReadback = null) -> void:
 	grid = p_grid
 	cell_size = p_cell_size
-	fluid = p_fluid
+	liquid = p_liquid
 	_density = PackedFloat32Array()
 	_density.resize(grid.width * grid.height)
 
@@ -69,8 +69,8 @@ func _draw() -> void:
 		var sid: int = grid.cells[i]
 		if sid > 0:
 			active_substances[sid] = true
-		if fluid and fluid.markers[i] > 0:
-			var fid: int = fluid.markers[i]
+		if liquid and liquid.markers[i] > 0:
+			var fid: int = liquid.markers[i]
 			active_substances[fid] = true
 
 	# Process each substance
@@ -80,7 +80,7 @@ func _draw() -> void:
 		# Build density field
 		_density.fill(0.0)
 		for i in range(size):
-			if grid.cells[i] == sid or (fluid and fluid.markers[i] == sid):
+			if grid.cells[i] == sid or (liquid and liquid.markers[i] == sid):
 				_density[i] = 1.0
 
 		# Simple blur (1 pass) for smoother contours

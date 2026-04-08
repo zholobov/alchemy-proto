@@ -5,7 +5,7 @@ extends RefCounted
 ## back into the appropriate systems.
 
 var grid: ParticleGrid
-var fluid: FluidSim
+var liquid: LiquidReadback  ## Read-only CPU snapshot of the PIC/FLIP fluid solver.
 var particle_fluid_solver: ParticleFluidSolver  # for creating liquid particles on phase change
 var game_log: GameLog
 var rigid_body_mgr: RigidBodyMgr
@@ -22,9 +22,9 @@ var reactions_this_frame: int = 0
 const MAX_REACTIONS_PER_FRAME := 500
 
 
-func setup(p_grid: ParticleGrid, p_fluid: FluidSim, p_log: GameLog) -> void:
+func setup(p_grid: ParticleGrid, p_liquid: LiquidReadback, p_log: GameLog) -> void:
 	grid = p_grid
-	fluid = p_fluid
+	liquid = p_liquid
 	game_log = p_log
 
 
@@ -40,12 +40,12 @@ func update() -> void:
 
 
 func _build_occupied_list() -> void:
-	## Scan readback data once to find all occupied cells (particles + fluid).
+	## Scan readback data once to find all occupied cells (particles + liquid).
 	_occupied_cells.clear()
 	for i in range(grid.cells.size()):
 		var has_particle := grid.cells[i] != 0
-		var has_fluid := fluid and i < fluid.markers.size() and fluid.markers[i] != 0
-		if has_particle or has_fluid:
+		var has_liquid := liquid and i < liquid.markers.size() and liquid.markers[i] != 0
+		if has_particle or has_liquid:
 			var x: int = i % grid.width
 			var y: int = floori(float(i) / float(grid.width))
 			_occupied_cells.append(Vector2i(x, y))
@@ -184,8 +184,6 @@ func _check_phase_changes_sparse() -> void:
 					var jy := randf() * 0.8 + 0.1
 					positions.append(Vector2(float(x) + jx, float(y) + jy))
 				particle_fluid_solver.spawn_particles_batch(positions, new_id)
-			else:
-				fluid.spawn_fluid(x, y, new_id)
 		elif new_sub.phase == SubstanceDef.Phase.GAS:
 			grid.cells[i] = new_id
 		else:
@@ -233,32 +231,6 @@ func _apply_reaction(ax: int, ay: int, bx: int, by: int, result: ReactionRules.R
 			"%s + %s -> reaction" % [sub_a.substance_name, sub_b.substance_name],
 			Color(1.0, 0.6, 0.2)
 		)
-
-
-func _apply_reaction_particle_fluid(x: int, y: int, result: ReactionRules.ReactionResult, _sub_p: SubstanceDef, _sub_f: SubstanceDef) -> void:
-	if result.consumed_a:
-		grid.clear_cell(x, y)
-	if result.consumed_b:
-		fluid.clear_cell(x, y)
-	if result.heat_output != 0.0:
-		_apply_heat(x, y, result.heat_output)
-	if result.gas_produced != "":
-		_spawn_gas(x, y, result.gas_produced)
-	if result.spawn_substance != "":
-		var new_id := SubstanceRegistry.get_id(result.spawn_substance)
-		if new_id > 0 and result.consumed_a:
-			grid.spawn_particle(x, y, new_id)
-
-
-func _apply_reaction_mixed(px: int, py: int, fx: int, fy: int, result: ReactionRules.ReactionResult, _sub_p: SubstanceDef, _sub_f: SubstanceDef) -> void:
-	if result.consumed_a:
-		grid.clear_cell(px, py)
-	if result.consumed_b:
-		fluid.clear_cell(fx, fy)
-	if result.heat_output != 0.0:
-		_apply_heat(px, py, result.heat_output)
-	if result.gas_produced != "":
-		_spawn_gas(px, py, result.gas_produced)
 
 
 func _apply_heat(x: int, y: int, amount: float) -> void:

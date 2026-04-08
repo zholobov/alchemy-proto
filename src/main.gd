@@ -40,7 +40,7 @@ func _ready() -> void:
 
 	# Create renderer manager.
 	renderer_manager = RendererManager.new()
-	renderer_manager.setup(receptacle, receptacle.grid, Receptacle.CELL_SIZE, receptacle.fluid)
+	renderer_manager.setup(receptacle, receptacle.grid, Receptacle.CELL_SIZE, receptacle.liquid_readback)
 	add_child(renderer_manager)
 
 	# Debug overlay on a CanvasLayer so it's always on top.
@@ -81,12 +81,12 @@ func _ready() -> void:
 
 	# Create dispenser.
 	dispenser = Dispenser.new()
-	dispenser.setup(receptacle.grid, receptacle.fluid, receptacle.global_position, Receptacle.CELL_SIZE, receptacle.gpu_sim, receptacle.fluid_solver)
+	dispenser.setup(receptacle.grid, receptacle.global_position, Receptacle.CELL_SIZE, receptacle.gpu_sim, receptacle.fluid_solver)
 	add_child(dispenser)
 
 	# Create mediator.
 	mediator = Mediator.new()
-	mediator.setup(receptacle.grid, receptacle.fluid, game_log)
+	mediator.setup(receptacle.grid, receptacle.liquid_readback, game_log)
 	mediator.rigid_body_mgr = receptacle.rigid_body_mgr
 	mediator.particle_fluid_solver = receptacle.fluid_solver
 
@@ -197,7 +197,7 @@ func _process(delta: float) -> void:
 
 	# --- CPU Mediator (sparse reactions only, fields run on GPU) ---
 	perf_monitor.begin_timing("Mediator")
-	var has_substances := receptacle.grid.count_particles() > 0 or receptacle.fluid.count_fluid_cells() > 0
+	var has_substances := receptacle.grid.count_particles() > 0 or receptacle.liquid_readback.count_occupied_cells() > 0
 	if has_substances:
 		mediator.update()
 		# Push reaction changes back to GPU
@@ -214,7 +214,7 @@ func _process(delta: float) -> void:
 	perf_monitor.end_timing("Render")
 
 	perf_monitor.update_particle_count(
-		receptacle.grid.count_particles() + receptacle.fluid.count_fluid_cells()
+		receptacle.grid.count_particles() + receptacle.liquid_readback.count_occupied_cells()
 	)
 
 
@@ -332,7 +332,7 @@ func _on_containment_failure() -> void:
 			if grid.get_cell(x, y) > 0:
 				if randf() < 0.7:
 					grid.clear_cell(x, y)
-	receptacle.fluid.markers.fill(0)
+	receptacle.liquid_readback.clear()
 	pressure_field.reset()
 
 

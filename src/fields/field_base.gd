@@ -55,6 +55,6 @@ func should_update() -> bool:
 	return false
 
 
-func update(_grid: ParticleGrid, _fluid: FluidSim, _delta: float) -> void:
+func update(_grid: ParticleGrid, _liquid: LiquidReadback, _delta: float) -> void:
 	## Override in subclasses.
 	pass

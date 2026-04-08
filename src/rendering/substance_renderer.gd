@@ -5,7 +5,7 @@ extends RendererBase
 
 var grid: ParticleGrid
 var cell_size: int = 4
-var fluid: FluidSim
+var liquid: LiquidReadback
 var _image: Image
 var _texture: ImageTexture
 var _pixel_data: PackedByteArray
@@ -15,10 +15,10 @@ var _sprite: Sprite2D
 var _color_cache: PackedColorArray
 
 
-func setup(p_grid: ParticleGrid, p_cell_size: int = 4, p_fluid: FluidSim = null) -> void:
+func setup(p_grid: ParticleGrid, p_cell_size: int = 4, p_liquid: LiquidReadback = null) -> void:
 	grid = p_grid
 	cell_size = p_cell_size
-	fluid = p_fluid
+	liquid = p_liquid
 
 	_image = Image.create(grid.width, grid.height, false, Image.FORMAT_RGBA8)
 	_texture = ImageTexture.create_from_image(_image)
@@ -74,25 +74,25 @@ func render() -> void:
 		else:
 			color = Color.MAGENTA
 
-		# Blend fluid on top if present. Scale fluid alpha by density so thin
-		# fluid cells are translucent and dense cells are opaque. This makes
-		# semi-Lagrangian "haze" cells fade out gracefully instead of being
-		# rendered as solid color.
-		if fluid and fluid.markers[i] != 0:
-			var fluid_id: int = fluid.markers[i]
-			var fluid_color: Color
-			if fluid_id < _color_cache.size():
-				fluid_color = _color_cache[fluid_id]
+		# Blend liquid on top if present. Scale liquid alpha by density so thin
+		# cells are translucent and dense cells are opaque. This makes
+		# sparse surface cells fade out gracefully instead of being rendered
+		# as solid color.
+		if liquid and liquid.markers[i] != 0:
+			var liquid_id: int = liquid.markers[i]
+			var liquid_color: Color
+			if liquid_id < _color_cache.size():
+				liquid_color = _color_cache[liquid_id]
 			else:
-				fluid_color = Color.MAGENTA
+				liquid_color = Color.MAGENTA
 			# Scale by density (clamped 0..1). Use sqrt to make low-density
 			# cells more visible than linear scaling would (sqrt(0.1)=0.32 vs 0.1).
-			var density_factor: float = sqrt(clampf(fluid.densities[i], 0.0, 1.0))
-			fluid_color.a *= density_factor
+			var density_factor: float = sqrt(clampf(liquid.densities[i], 0.0, 1.0))
+			liquid_color.a *= density_factor
 			if color.a > 0:
-				color = color.lerp(fluid_color, fluid_color.a)
+				color = color.lerp(liquid_color, liquid_color.a)
 			else:
-				color = fluid_color
+				color = liquid_color
 
 		# Boundary walls.
 		if grid.boundary[i] == 0:

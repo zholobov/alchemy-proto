@@ -19,7 +19,7 @@ func calculate_volume() -> void:
 			receptacle_volume += 1
 
 
-func update(grid: ParticleGrid, _fluid: FluidSim, _delta: float) -> void:
+func update(grid: ParticleGrid, _liquid: LiquidReadback, _delta: float) -> void:
 	if not should_update():
 		return
 

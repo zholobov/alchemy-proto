@@ -4,7 +4,6 @@ extends Node2D
 ## Handles creation, displacement of grid cells, and dissolution.
 
 var grid: ParticleGrid
-var fluid: FluidSim
 var _bodies: Array[RigidBody2D] = []
 
 ## Reference to receptacle for coordinate conversion.
@@ -12,9 +11,8 @@ var receptacle_position: Vector2
 var cell_size: int
 
 
-func setup(p_grid: ParticleGrid, p_fluid: FluidSim, p_receptacle_pos: Vector2, p_cell_size: int) -> void:
+func setup(p_grid: ParticleGrid, p_receptacle_pos: Vector2, p_cell_size: int) -> void:
 	grid = p_grid
-	fluid = p_fluid
 	receptacle_position = p_receptacle_pos
 	cell_size = p_cell_size
 

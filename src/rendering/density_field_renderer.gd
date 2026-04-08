@@ -5,7 +5,7 @@ extends RendererBase
 
 var grid: ParticleGrid
 var cell_size: int = 4
-var fluid: FluidSim
+var liquid: LiquidReadback
 
 var _output_sprite: Sprite2D
 var _output_image: Image
@@ -20,10 +20,10 @@ var _blurred_pixels: PackedFloat32Array
 var _color_cache: PackedColorArray
 
 
-func setup(p_grid: ParticleGrid, p_cell_size: int = 4, p_fluid: FluidSim = null) -> void:
+func setup(p_grid: ParticleGrid, p_cell_size: int = 4, p_liquid: LiquidReadback = null) -> void:
 	grid = p_grid
 	cell_size = p_cell_size
-	fluid = p_fluid
+	liquid = p_liquid
 
 	var w := grid.width
 	var h := grid.height
@@ -86,8 +86,8 @@ func render() -> void:
 		var sid: int = grid.cells[i]
 		if sid > 0:
 			active_substances[sid] = true
-		if fluid:
-			var fid: int = fluid.markers[i]
+		if liquid:
+			var fid: int = liquid.markers[i]
 			if fid > 0:
 				active_substances[fid] = true
 
@@ -98,7 +98,7 @@ func render() -> void:
 		# Build density field for this substance
 		_density_pixels.fill(0)
 		for i in range(size):
-			if grid.cells[i] == sid or (fluid and fluid.markers[i] == sid):
+			if grid.cells[i] == sid or (liquid and liquid.markers[i] == sid):
 				_density_pixels[i] = 255
 
 		# Box blur the density field (2 passes for smooth result)

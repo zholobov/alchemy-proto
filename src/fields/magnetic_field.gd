@@ -11,7 +11,7 @@ func _init(w: int, h: int) -> void:
 	update_interval = 4
 
 
-func update(grid: ParticleGrid, _fluid: FluidSim, _delta: float) -> void:
+func update(grid: ParticleGrid, _liquid: LiquidReadback, _delta: float) -> void:
 	if not should_update():
 		return
 

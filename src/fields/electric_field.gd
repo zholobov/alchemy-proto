@@ -11,7 +11,7 @@ func _init(w: int, h: int) -> void:
 	update_interval = 2
 
 
-func update(grid: ParticleGrid, fluid: FluidSim, _delta: float) -> void:
+func update(grid: ParticleGrid, liquid: LiquidReadback, _delta: float) -> void:
 	if not should_update():
 		return
 
@@ -28,7 +28,7 @@ func update(grid: ParticleGrid, fluid: FluidSim, _delta: float) -> void:
 				continue
 
 			var substance_id: int = grid.cells[i]
-			var fluid_id: int = fluid.markers[i] if i < fluid.markers.size() else 0
+			var fluid_id: int = liquid.markers[i] if liquid and i < liquid.markers.size() else 0
 			var conductivity := 0.0
 
 			if substance_id > 0:
@@ -54,7 +54,7 @@ func update(grid: ParticleGrid, fluid: FluidSim, _delta: float) -> void:
 					continue
 				var ni := idx(n.x, n.y)
 				var n_sub_id: int = grid.cells[ni]
-				var n_fluid_id: int = fluid.markers[ni] if ni < fluid.markers.size() else 0
+				var n_fluid_id: int = liquid.markers[ni] if liquid and ni < liquid.markers.size() else 0
 				var n_conductivity := 0.0
 				if n_sub_id > 0:
 					var ns := SubstanceRegistry.get_substance(n_sub_id)
