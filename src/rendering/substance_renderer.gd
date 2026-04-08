@@ -6,6 +6,7 @@ extends RendererBase
 var grid: ParticleGrid
 var cell_size: int = 4
 var liquid: LiquidReadback
+var vapor: VaporSim
 var _image: Image
 var _texture: ImageTexture
 var _pixel_data: PackedByteArray
@@ -14,11 +15,17 @@ var _sprite: Sprite2D
 ## Cache substance colors to avoid lookups every pixel every frame.
 var _color_cache: PackedColorArray
 
+## Vapor alpha multiplier. Vapor is always translucent regardless of
+## substance base_color alpha so it reads as fog/mist overlay rather
+## than solid fill.
+const VAPOR_ALPHA_SCALE := 0.5
 
-func setup(p_grid: ParticleGrid, p_cell_size: int = 4, p_liquid: LiquidReadback = null) -> void:
+
+func setup(p_grid: ParticleGrid, p_cell_size: int = 4, p_liquid: LiquidReadback = null, p_vapor: VaporSim = null) -> void:
 	grid = p_grid
 	cell_size = p_cell_size
 	liquid = p_liquid
+	vapor = p_vapor
 
 	_image = Image.create(grid.width, grid.height, false, Image.FORMAT_RGBA8)
 	_texture = ImageTexture.create_from_image(_image)
@@ -93,6 +100,22 @@ func render() -> void:
 				color = color.lerp(liquid_color, liquid_color.a)
 			else:
 				color = liquid_color
+
+		# Blend vapor on top of everything except walls. Vapor uses the
+		# substance's base color scaled down to VAPOR_ALPHA_SCALE so it
+		# reads as fog rather than solid fill.
+		if vapor and vapor.markers[i] != 0:
+			var vapor_id: int = vapor.markers[i]
+			var vapor_color: Color
+			if vapor_id < _color_cache.size():
+				vapor_color = _color_cache[vapor_id]
+			else:
+				vapor_color = Color.MAGENTA
+			vapor_color.a *= VAPOR_ALPHA_SCALE
+			if color.a > 0:
+				color = color.lerp(vapor_color, vapor_color.a)
+			else:
+				color = vapor_color
 
 		# Boundary walls.
 		if grid.boundary[i] == 0:

@@ -4,7 +4,7 @@ extends Node2D
 ## Subclasses must override setup(), render(), get_renderer_name(), and cleanup().
 
 
-func setup(_p_grid: ParticleGrid, _p_cell_size: int, _p_liquid: LiquidReadback) -> void:
+func setup(_p_grid: ParticleGrid, _p_cell_size: int, _p_liquid: LiquidReadback, _p_vapor: VaporSim = null) -> void:
 	pass
 
 

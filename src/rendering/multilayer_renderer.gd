@@ -6,6 +6,7 @@ extends RendererBase
 var grid: ParticleGrid
 var cell_size: int = 4
 var liquid: LiquidReadback
+var vapor: VaporSim
 
 # Per-layer data images
 var _powder_image: Image
@@ -33,10 +34,11 @@ var _color_cache: PackedColorArray
 var _phase_cache: PackedInt32Array
 
 
-func setup(p_grid: ParticleGrid, p_cell_size: int = 4, p_liquid: LiquidReadback = null) -> void:
+func setup(p_grid: ParticleGrid, p_cell_size: int = 4, p_liquid: LiquidReadback = null, p_vapor: VaporSim = null) -> void:
 	grid = p_grid
 	cell_size = p_cell_size
 	liquid = p_liquid
+	vapor = p_vapor
 
 	var w := grid.width
 	var h := grid.height
@@ -164,6 +166,15 @@ func render() -> void:
 					_write_pixel(_liquid_pixels, i, color)
 				SubstanceDef.Phase.GAS:
 					_write_pixel(_gas_pixels, i, color)
+
+		# Vapor (fog/mist/steam) goes into the gas layer too, regardless of
+		# what else is in the cell. Translucent so it reads as overlay.
+		if vapor:
+			var vapor_id: int = vapor.markers[i]
+			if vapor_id > 0 and vapor_id < _color_cache.size():
+				var vcolor: Color = _color_cache[vapor_id]
+				vcolor.a *= 0.5
+				_write_pixel(_gas_pixels, i, vcolor)
 
 	var w := grid.width
 	var h := grid.height

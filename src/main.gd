@@ -40,7 +40,7 @@ func _ready() -> void:
 
 	# Create renderer manager.
 	renderer_manager = RendererManager.new()
-	renderer_manager.setup(receptacle, receptacle.grid, Receptacle.CELL_SIZE, receptacle.liquid_readback)
+	renderer_manager.setup(receptacle, receptacle.grid, Receptacle.CELL_SIZE, receptacle.liquid_readback, receptacle.vapor_sim)
 	add_child(renderer_manager)
 
 	# Debug overlay on a CanvasLayer so it's always on top.

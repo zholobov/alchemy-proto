@@ -6,6 +6,7 @@ extends RendererBase
 var grid: ParticleGrid
 var cell_size: int = 4
 var liquid: LiquidReadback
+var vapor: VaporSim
 
 var _density: PackedFloat32Array
 var _color_cache: PackedColorArray
@@ -15,10 +16,11 @@ const OUTLINE_COLOR := Color(0.2, 0.18, 0.15, 0.6)
 const OUTLINE_WIDTH := 1.5
 
 
-func setup(p_grid: ParticleGrid, p_cell_size: int = 4, p_liquid: LiquidReadback = null) -> void:
+func setup(p_grid: ParticleGrid, p_cell_size: int = 4, p_liquid: LiquidReadback = null, p_vapor: VaporSim = null) -> void:
 	grid = p_grid
 	cell_size = p_cell_size
 	liquid = p_liquid
+	vapor = p_vapor
 	_density = PackedFloat32Array()
 	_density.resize(grid.width * grid.height)
 

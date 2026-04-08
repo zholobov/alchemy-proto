@@ -11,14 +11,16 @@ var _active_renderer: RendererBase
 var _grid: ParticleGrid
 var _cell_size: int
 var _liquid: LiquidReadback
+var _vapor: VaporSim
 var _parent_node: Node2D  ## Receptacle — renderers are added as children of this.
 
 
-func setup(parent: Node2D, grid: ParticleGrid, cell_size: int, liquid: LiquidReadback) -> void:
+func setup(parent: Node2D, grid: ParticleGrid, cell_size: int, liquid: LiquidReadback, vapor: VaporSim = null) -> void:
 	_parent_node = parent
 	_grid = grid
 	_cell_size = cell_size
 	_liquid = liquid
+	_vapor = vapor
 
 	# Register available renderers.
 	_register(SubstanceRenderer, "Debug Pixel")
@@ -49,7 +51,7 @@ func _activate(index: int) -> void:
 	_parent_node.add_child(_active_renderer)
 	# Move to index 0 so it renders below field_renderer and other children.
 	_parent_node.move_child(_active_renderer, 0)
-	_active_renderer.setup(_grid, _cell_size, _liquid)
+	_active_renderer.setup(_grid, _cell_size, _liquid, _vapor)
 
 	print("Renderer switched to: %s" % _renderer_names[index])
 

@@ -6,6 +6,7 @@ extends RendererBase
 var grid: ParticleGrid
 var cell_size: int = 4
 var liquid: LiquidReadback
+var vapor: VaporSim
 
 var _output_sprite: Sprite2D
 var _output_image: Image
@@ -20,10 +21,11 @@ var _blurred_pixels: PackedFloat32Array
 var _color_cache: PackedColorArray
 
 
-func setup(p_grid: ParticleGrid, p_cell_size: int = 4, p_liquid: LiquidReadback = null) -> void:
+func setup(p_grid: ParticleGrid, p_cell_size: int = 4, p_liquid: LiquidReadback = null, p_vapor: VaporSim = null) -> void:
 	grid = p_grid
 	cell_size = p_cell_size
 	liquid = p_liquid
+	vapor = p_vapor
 
 	var w := grid.width
 	var h := grid.height
