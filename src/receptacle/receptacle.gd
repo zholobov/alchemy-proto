@@ -17,7 +17,9 @@ var grid: ParticleGrid
 var fluid: FluidSim
 var rigid_body_mgr: RigidBodyMgr
 var gpu_sim: GpuSimulation
-var fluid_solver: FluidSolver
+# experiment/pic-flip: replaced grid-based FluidSolver with particle-based
+# solver. The field name stays the same so callers don't need to change.
+var fluid_solver: ParticleFluidSolver
 
 ## Canonical oval parameters in pixel space — single source of truth.
 ## All three systems (grid boundary, collision, drawing) derive from these.
@@ -49,11 +51,13 @@ func _ready() -> void:
 	gpu_sim = GpuSimulation.new()
 	gpu_sim.setup(GRID_WIDTH, GRID_HEIGHT, grid.boundary)
 
-	# Create GPU MAC fluid solver sharing the same boundary and grid dimensions.
-	# Liquids are simulated here (incompressible flow with pressure projection)
-	# while powders and solids remain in the particle grid.
-	fluid_solver = FluidSolver.new()
+	# Create GPU PIC/FLIP particle fluid solver sharing the same boundary and
+	# grid dimensions. Each liquid particle carries its substance id and
+	# velocity; the grid is used only for pressure projection. Powders and
+	# solids still live in the particle grid.
+	fluid_solver = ParticleFluidSolver.new()
 	fluid_solver.setup(GRID_WIDTH, GRID_HEIGHT, grid.boundary)
+	fluid_solver.upload_substance_properties()
 
 	# Create legacy CPU fluid simulation sharing the same boundary (used by
 	# renderers that haven't been switched to fluid_solver yet).

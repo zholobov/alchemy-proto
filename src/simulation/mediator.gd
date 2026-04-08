@@ -6,6 +6,7 @@ extends RefCounted
 
 var grid: ParticleGrid
 var fluid: FluidSim
+var particle_fluid_solver: ParticleFluidSolver  # for creating liquid particles on phase change
 var game_log: GameLog
 var rigid_body_mgr: RigidBodyMgr
 
@@ -174,7 +175,15 @@ func _check_phase_changes_sparse() -> void:
 
 		if new_sub.phase == SubstanceDef.Phase.LIQUID:
 			grid.clear_cell(x, y)
-			fluid.spawn_fluid(x, y, new_id)
+			if particle_fluid_solver:
+				# Spawn a cell's worth of particles with jitter so the new
+				# liquid is immediately visible after the phase change.
+				var positions: Array[Vector2] = []
+				for j in range(8):
+					positions.append(Vector2(float(x) + randf(), float(y) + randf()))
+				particle_fluid_solver.spawn_particles_batch(positions, new_id)
+			else:
+				fluid.spawn_fluid(x, y, new_id)
 		elif new_sub.phase == SubstanceDef.Phase.GAS:
 			grid.cells[i] = new_id
 		else:

@@ -88,6 +88,7 @@ func _ready() -> void:
 	mediator = Mediator.new()
 	mediator.setup(receptacle.grid, receptacle.fluid, game_log)
 	mediator.rigid_body_mgr = receptacle.rigid_body_mgr
+	mediator.particle_fluid_solver = receptacle.fluid_solver
 
 	# Create fields — all share the same boundary.
 	var gw := Receptacle.GRID_WIDTH
@@ -238,9 +239,13 @@ func _on_substance_pouring(substance_id: int, pos: Vector2) -> void:
 				positions.append(Vector2i(grid_pos.x + dx, grid_pos.y + dy))
 
 	if substance.phase == SubstanceDef.Phase.LIQUID:
-		# Liquids spawn into the GPU MAC fluid solver (incompressible flow).
+		# Liquids spawn into the PIC/FLIP particle fluid solver. Spawn multiple
+		# particles per cell (with jitter) to reach the solver's target density.
+		var particle_positions: Array[Vector2] = []
 		for p in positions:
-			receptacle.fluid_solver.spawn_fluid(p.x, p.y, 1.0, substance_id)
+			for i in range(4):  # 4 particles per cell per frame (accumulate over multiple frames)
+				particle_positions.append(Vector2(float(p.x) + randf(), float(p.y) + randf()))
+		receptacle.fluid_solver.spawn_particles_batch(particle_positions, substance_id)
 	else:
 		# Powders and other phases use the particle grid.
 		receptacle.gpu_sim.spawn_cells(positions, substance_id)
@@ -276,8 +281,12 @@ func _flood_fill() -> void:
 			positions.append(Vector2i(x, y))
 
 	if substance.phase == SubstanceDef.Phase.LIQUID:
+		# Fill every interior cell with a full density of particles (8 per cell)
+		var particle_positions: Array[Vector2] = []
 		for p in positions:
-			receptacle.fluid_solver.spawn_fluid(p.x, p.y, 1.0, _selected_substance_id)
+			for i in range(8):
+				particle_positions.append(Vector2(float(p.x) + randf(), float(p.y) + randf()))
+		receptacle.fluid_solver.spawn_particles_batch(particle_positions, _selected_substance_id)
 	else:
 		receptacle.gpu_sim.spawn_cells(positions, _selected_substance_id)
 	game_log.log_event("Flood filled %d cells with %s" % [positions.size(), _selected_substance_name], Color.ORANGE)

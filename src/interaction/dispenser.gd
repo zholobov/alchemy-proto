@@ -10,14 +10,14 @@ var _emit_timer: float = 0.0
 var _grid: ParticleGrid
 var _fluid: FluidSim
 var _gpu_sim: GpuSimulation
-var _fluid_solver: FluidSolver
+var _fluid_solver: ParticleFluidSolver
 var _receptacle_pos: Vector2
 var _cell_size: int
 
 var _cursor_indicator: ColorRect
 
 
-func setup(grid: ParticleGrid, fluid: FluidSim, receptacle_pos: Vector2, cell_size: int, gpu_sim: GpuSimulation = null, fluid_solver: FluidSolver = null) -> void:
+func setup(grid: ParticleGrid, fluid: FluidSim, receptacle_pos: Vector2, cell_size: int, gpu_sim: GpuSimulation = null, fluid_solver: ParticleFluidSolver = null) -> void:
 	_grid = grid
 	_fluid = fluid
 	_gpu_sim = gpu_sim
@@ -73,8 +73,13 @@ func _emit_particle(screen_pos: Vector2) -> void:
 
 	var pos := Vector2i(gx, gy)
 	if sub.phase == SubstanceDef.Phase.LIQUID and _fluid_solver:
-		# Liquids spawn into the GPU MAC fluid solver (incompressible flow).
-		_fluid_solver.spawn_fluid(gx, gy, 1.0, substance_id)
+		# Liquids spawn into the PIC/FLIP particle solver. Spawn 4 jittered
+		# particles for the single dispenser cell to build up density over
+		# multiple frames of continuous dispensing.
+		var particle_positions: Array[Vector2] = []
+		for i in range(4):
+			particle_positions.append(Vector2(float(gx) + randf(), float(gy) + randf()))
+		_fluid_solver.spawn_particles_batch(particle_positions, substance_id)
 	elif _gpu_sim:
 		_gpu_sim.spawn_cells([pos], substance_id)
 	else:
