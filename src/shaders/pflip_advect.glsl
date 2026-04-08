@@ -31,8 +31,9 @@ layout(set = 0, binding = 2, std430) restrict buffer BoundaryBuffer {
 } boundary;
 
 layout(set = 0, binding = 3, std430) restrict buffer SubstanceProperties {
-    // vec2 per substance id. .x = viscosity, .y = flip_ratio (used in g2p, not here)
-    vec2 data[];
+    // vec4 per substance id. .x = viscosity, .y = flip_ratio (g2p),
+    // .z = density, .w = reserved.
+    vec4 data[];
 } substance_props;
 
 layout(set = 0, binding = 4, std430) restrict buffer DensityField {

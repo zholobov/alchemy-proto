@@ -31,7 +31,7 @@ extends RefCounted
 const MAX_PARTICLES := 262144  # 256k. ~6 MB. Enough to fill 200x150 grid at 8/cell.
 const PARTICLE_STRIDE := 24  # bytes: vec2 pos + vec2 vel + int substance + int alive
 const MAX_SUBSTANCES := 64   # size of the substance properties table
-const SUBSTANCE_PROPS_STRIDE := 8  # bytes per substance: vec2(viscosity, flip_ratio)
+const SUBSTANCE_PROPS_STRIDE := 16  # bytes per substance: vec4(viscosity, flip_ratio, density, _)
 const JACOBI_ITERATIONS := 80
 
 ## Fixed internal sub-step dt. The shader constants in pflip_advect.glsl
@@ -310,16 +310,21 @@ func clear() -> void:
 
 func upload_substance_properties() -> void:
 	## Populate the substance properties buffer from SubstanceRegistry.
-	## Layout: vec2 per substance — .x = viscosity, .y = flip_ratio.
-	## Call after setup() and whenever registry entries change.
+	## Layout: vec4 per substance — .x = viscosity, .y = flip_ratio,
+	## .z = density, .w = reserved. VaporSim uses the same layout so both
+	## sims can share a single encoding pattern. Call after setup() and
+	## whenever registry entries change.
 	var bytes := PackedByteArray()
 	bytes.resize(MAX_SUBSTANCES * SUBSTANCE_PROPS_STRIDE)
 	# Index 0 reserved (no substance) — leave as zeros.
 	for i in range(1, MAX_SUBSTANCES):
 		var sub := SubstanceRegistry.get_substance(i)
 		if sub:
-			bytes.encode_float(i * SUBSTANCE_PROPS_STRIDE + 0, sub.viscosity)
-			bytes.encode_float(i * SUBSTANCE_PROPS_STRIDE + 4, sub.flip_ratio)
+			var off: int = i * SUBSTANCE_PROPS_STRIDE
+			bytes.encode_float(off + 0, sub.viscosity)
+			bytes.encode_float(off + 4, sub.flip_ratio)
+			bytes.encode_float(off + 8, sub.density)
+			bytes.encode_float(off + 12, 0.0)
 	rd.buffer_update(buf_substance_props, 0, MAX_SUBSTANCES * SUBSTANCE_PROPS_STRIDE, bytes)
 
 

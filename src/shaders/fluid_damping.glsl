@@ -18,7 +18,10 @@ layout(set = 0, binding = 2, std430) restrict buffer VVelocity {
     float data[];
 } v_vel;
 
-const float DAMPING = 0.995;  // 0.5% velocity loss per frame
+// 1% velocity loss per frame. Previously 0.995 (0.5%) when this solver was
+// intended for liquids; raised for vapor so gas clouds visibly dissipate
+// over ~2-3 seconds rather than drifting forever.
+const float DAMPING = 0.99;
 
 void main() {
     int x = int(gl_GlobalInvocationID.x);

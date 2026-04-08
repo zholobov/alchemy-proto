@@ -53,8 +53,9 @@ layout(set = 0, binding = 6, std430) restrict buffer CellTypeBuffer {
 } cell_type;
 
 layout(set = 0, binding = 7, std430) restrict buffer SubstanceProperties {
-    // vec2 per substance id. .x = viscosity, .y = flip_ratio
-    vec2 data[];
+    // vec4 per substance id. .x = viscosity, .y = flip_ratio,
+    // .z = density, .w = reserved.
+    vec4 data[];
 } substance_props;
 
 const int CELL_FLUID = 1;

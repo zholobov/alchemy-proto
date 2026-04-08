@@ -65,10 +65,12 @@ func _ready() -> void:
 	# CPU-side mirror of the liquid solver state, rebuilt each frame.
 	liquid_readback = LiquidReadback.new(GRID_WIDTH, GRID_HEIGHT)
 
-	# CPU grid MAC simulator for vapor/fog/steam. Shares the oval boundary
-	# with the particle grid so gases respect the container walls.
-	vapor_sim = VaporSim.new(GRID_WIDTH, GRID_HEIGHT)
-	vapor_sim.boundary = grid.boundary
+	# GPU grid MAC simulator for vapor/fog/steam. Shares the oval boundary
+	# so gases respect the container walls. Repurposed from the earlier
+	# FluidSolver (same shader pipeline, gas-appropriate tuning + buoyancy).
+	vapor_sim = VaporSim.new()
+	vapor_sim.setup(GRID_WIDTH, GRID_HEIGHT, grid.boundary)
+	vapor_sim.upload_substance_properties()
 
 	# Create rigid body manager.
 	rigid_body_mgr = RigidBodyMgr.new()
@@ -193,3 +195,5 @@ func _exit_tree() -> void:
 		gpu_sim.cleanup()
 	if fluid_solver:
 		fluid_solver.cleanup()
+	if vapor_sim:
+		vapor_sim.cleanup()

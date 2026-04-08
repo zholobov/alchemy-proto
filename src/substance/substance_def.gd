@@ -10,16 +10,19 @@ enum Phase { SOLID, POWDER, LIQUID, GAS }
 @export var phase: Phase = Phase.POWDER
 
 @export_group("Physical")
+## Mass per unit volume. Drives buoyancy (Archimedes) in both the vapor sim
+## and PIC/FLIP liquid sim: effective gravity = g × (1 - ambient_density /
+## density), where ambient is AIR_DENSITY in VaporSim (gas behavior vs air)
+## and also AIR_DENSITY in PIC/FLIP for now (liquids fall in an empty
+## receptacle, not immersed in another liquid). Use real-world relative
+## values: water=1.0, oil=0.8, mercury=13.5, steam=0.0006, CO2≈0.002,
+## methane≈0.00065. Air in our scale is ~0.0012 (water is 1000× denser).
 @export var density: float = 1.0
 @export var viscosity: float = 1.0  ## For liquids. Higher = thicker (honey > water).
 ## PIC/FLIP blend factor used by pflip_g2p.glsl. 1.0 = pure FLIP (lively,
 ## preserves swirl), 0.0 = pure PIC (heavy, dissipative). 0.95 is a standard
 ## lively water; drop toward 0.7-0.85 for sluggish fluids like oil or tar.
 @export_range(0.0, 1.0) var flip_ratio: float = 0.95
-## Gravity direction+magnitude multiplier for VaporSim. 1.0 = normal downward
-## gravity (heavy smoke, liquid). Negative = buoyant/rising (steam, hot air).
-## 0.0 = neutral (gas that just swirls without vertical drift).
-@export_range(-2.0, 2.0) var gravity_multiplier: float = 1.0
 
 @export_group("Thermal")
 @export var melting_point: float = 1000.0  ## Temperature at which solid -> liquid.
