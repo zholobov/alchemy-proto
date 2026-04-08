@@ -75,6 +75,7 @@ var buf_density_float: RID  # float, normalized density (for classify)
 var buf_substance: RID
 var buf_substance2: RID  # C1: secondary substance per cell for mixing visualization
 var buf_substance_props: RID  # per-substance properties (viscosity, ...) indexed by id
+var buf_kill_mask: RID  # mediator sets cells to 1 to destroy liquid particles there
 var buf_cell_type: RID
 var buf_divergence: RID
 var buf_pressure: RID
@@ -95,6 +96,7 @@ var shader_wall_zero: RID
 var shader_divergence: RID
 var shader_jacobi: RID
 var shader_gradient: RID
+var shader_apply_kills: RID
 
 # Pipelines
 var pipeline_clear_grid: RID
@@ -111,6 +113,7 @@ var pipeline_wall_zero: RID
 var pipeline_divergence: RID
 var pipeline_jacobi: RID
 var pipeline_gradient: RID
+var pipeline_apply_kills: RID
 
 # Uniform sets
 var uset_clear_grid: RID
@@ -128,6 +131,13 @@ var uset_divergence: RID
 var uset_jacobi_ab: RID
 var uset_jacobi_ba: RID
 var uset_gradient: RID
+var uset_apply_kills: RID
+
+# CPU-side staging for the mediator's cell kill mask. Mediator calls
+# mark_cell_for_kill() which sets bits here; on the next step() we
+# upload + dispatch apply_kills + clear the mask.
+var _kill_mask_cpu: PackedInt32Array
+var _kill_mask_dirty: bool = false
 
 # Dispatch dimensions
 var groups_grid_x: int
@@ -174,6 +184,12 @@ func step(frame_delta: float) -> void:
 		_readback()
 		return
 
+	# Mediator-queued kill pass. Runs ONCE per frame (not once per substep),
+	# at the top so the remaining substeps act on the culled particle set.
+	# No-op on frames when no reactions consumed liquid cells.
+	if _kill_mask_dirty:
+		_flush_kill_mask()
+
 	var num_substeps := maxi(1, ceili(frame_delta / TARGET_DT))
 	num_substeps = mini(num_substeps, MAX_SUBSTEPS)
 	var sub_delta := frame_delta / float(num_substeps)
@@ -182,6 +198,27 @@ func step(frame_delta: float) -> void:
 		_single_step(sub_delta)
 
 	_readback()
+
+
+func mark_cell_for_kill(x: int, y: int) -> void:
+	## Called by the mediator when a reaction consumes a liquid cell. The
+	## mark is applied on the next step() call via a GPU dispatch. Multiple
+	## calls in the same frame accumulate into the mask without duplication.
+	if x < 0 or x >= width or y < 0 or y >= height:
+		return
+	_kill_mask_cpu[y * width + x] = 1
+	_kill_mask_dirty = true
+
+
+func _flush_kill_mask() -> void:
+	## Upload the CPU mask to the GPU, dispatch apply_kills, clear the mask,
+	## and drop the dirty flag. Called once at the top of step() when dirty.
+	# Need fresh params with particle_count before dispatching.
+	_update_params(0.0)
+	rd.buffer_update(buf_kill_mask, 0, cell_count * 4, _kill_mask_cpu.to_byte_array())
+	_dispatch(pipeline_apply_kills, uset_apply_kills, groups_part, 1)
+	_kill_mask_cpu.fill(0)
+	_kill_mask_dirty = false
 
 
 func _single_step(sub_delta: float) -> void:
@@ -308,6 +345,9 @@ func clear() -> void:
 	rd.buffer_update(buf_particles, 0, MAX_PARTICLES * PARTICLE_STRIDE, zeros)
 	_particle_count = 0
 	_alive_count = 0
+	# Drop any pending mediator kills — there's nothing left to kill.
+	_kill_mask_cpu.fill(0)
+	_kill_mask_dirty = false
 
 
 func upload_substance_properties() -> void:
@@ -362,7 +402,7 @@ func cleanup() -> void:
 	for p in [pipeline_clear_grid, pipeline_p2g, pipeline_normalize, pipeline_save_vel,
 			  pipeline_g2p, pipeline_advect, pipeline_classify, pipeline_density_correction,
 			  pipeline_viscosity, pipeline_extrapolate, pipeline_wall_zero,
-			  pipeline_divergence, pipeline_jacobi, pipeline_gradient]:
+			  pipeline_divergence, pipeline_jacobi, pipeline_gradient, pipeline_apply_kills]:
 		if p.is_valid():
 			rd.free_rid(p)
 
@@ -370,7 +410,7 @@ func cleanup() -> void:
 	for s in [shader_clear_grid, shader_p2g, shader_normalize, shader_save_vel,
 			  shader_g2p, shader_advect, shader_classify, shader_density_correction,
 			  shader_viscosity, shader_extrapolate, shader_wall_zero, shader_divergence,
-			  shader_jacobi, shader_gradient]:
+			  shader_jacobi, shader_gradient, shader_apply_kills]:
 		if s.is_valid():
 			rd.free_rid(s)
 
@@ -378,7 +418,8 @@ func cleanup() -> void:
 	for b in [buf_params, buf_particles, buf_boundary, buf_u_vel, buf_v_vel,
 			  buf_u_weights, buf_v_weights, buf_u_old, buf_v_old, buf_u_temp, buf_v_temp,
 			  buf_density_count, buf_density_float, buf_substance, buf_substance2,
-			  buf_substance_props, buf_cell_type, buf_divergence, buf_pressure, buf_pressure_out]:
+			  buf_substance_props, buf_cell_type, buf_divergence, buf_pressure, buf_pressure_out,
+			  buf_kill_mask]:
 		if b.is_valid():
 			rd.free_rid(b)
 
@@ -438,6 +479,12 @@ func _create_buffers(boundary_mask: PackedByteArray) -> void:
 	buf_substance = rd.storage_buffer_create(cell_count * 4, cell_zeros_i.to_byte_array())
 	buf_substance2 = rd.storage_buffer_create(cell_count * 4, cell_zeros_i.to_byte_array())
 	buf_cell_type = rd.storage_buffer_create(cell_count * 4, cell_zeros_i.to_byte_array())
+	buf_kill_mask = rd.storage_buffer_create(cell_count * 4, cell_zeros_i.to_byte_array())
+
+	# Preallocate the CPU kill-mask staging array so mark_cell_for_kill()
+	# doesn't reallocate on first hit.
+	_kill_mask_cpu = PackedInt32Array()
+	_kill_mask_cpu.resize(cell_count)
 
 	var cell_zeros_f := PackedFloat32Array()
 	cell_zeros_f.resize(cell_count)
@@ -457,6 +504,7 @@ func _compile_shaders() -> void:
 	shader_density_correction = _load("res://src/shaders/pflip_density_correction.glsl")
 	shader_viscosity = _load("res://src/shaders/pflip_viscosity.glsl")
 	shader_extrapolate = _load("res://src/shaders/pflip_extrapolate.glsl")
+	shader_apply_kills = _load("res://src/shaders/pflip_apply_kills.glsl")
 	# pflip_classify uses a higher density threshold than the grid solver's
 	# fluid_classify (sparse cells become AIR so falling streams aren't
 	# pressure-corrected).
@@ -612,6 +660,17 @@ func _create_pipelines() -> void:
 		[3, buf_v_vel],
 		[4, buf_u_temp],
 		[5, buf_v_temp],
+	])
+
+	# apply_kills: mediator-driven cell-level kill pass for liquid reactions.
+	# Reads the kill_mask and zeroes `alive` on any particle whose current
+	# cell is marked. Dispatched at the top of step() before substeps when
+	# _kill_mask_dirty is true.
+	pipeline_apply_kills = rd.compute_pipeline_create(shader_apply_kills)
+	uset_apply_kills = _build_uset(shader_apply_kills, [
+		[0, buf_params],
+		[1, buf_particles],
+		[2, buf_kill_mask],
 	])
 
 	# jacobi (ping-pong)
