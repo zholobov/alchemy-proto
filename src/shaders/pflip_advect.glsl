@@ -31,7 +31,8 @@ layout(set = 0, binding = 2, std430) restrict buffer BoundaryBuffer {
 } boundary;
 
 layout(set = 0, binding = 3, std430) restrict buffer SubstanceProperties {
-    float viscosity[];  // indexed by substance id
+    // vec2 per substance id. .x = viscosity, .y = flip_ratio (used in g2p, not here)
+    vec2 data[];
 } substance_props;
 
 layout(set = 0, binding = 4, std430) restrict buffer DensityField {
@@ -84,7 +85,7 @@ void main() {
         float speed = length(p.vel);
         // Linear falloff: full drag at speed=0, zero drag at speed >= falloff
         float speed_factor = clamp(1.0 - speed / DRAG_SPEED_FALLOFF, 0.0, 1.0);
-        float drag = substance_props.viscosity[p.substance_id] * DRAG_SCALE * speed_factor;
+        float drag = substance_props.data[p.substance_id].x * DRAG_SCALE * speed_factor;
         p.vel *= max(0.0, 1.0 - drag * params.delta_time);
     }
 

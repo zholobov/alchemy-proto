@@ -5,7 +5,12 @@
 // its position via bilinear interpolation. Uses FLIP/PIC blending:
 //   FLIP: particle.vel += (current_vel - old_vel)   — preserves swirl
 //   PIC:  particle.vel = current_vel                — more diffusive but stable
-// Hybrid (default): 0.95 * FLIP + 0.05 * PIC = sharp surface, stable.
+// Blend ratio is PER SUBSTANCE, stored in substance_props.data[id].y:
+//   water    ~0.95  — lively, preserves swirl
+//   acid     ~0.92  — slightly damped
+//   oil      ~0.85  — more dissipative, heavier feel
+// Substance id comes from the particle itself, so the blend varies across
+// particles in a mixed fluid (the rare case — most cells are monomaterial).
 
 layout(local_size_x = 64, local_size_y = 1, local_size_z = 1) in;
 
@@ -47,8 +52,13 @@ layout(set = 0, binding = 6, std430) restrict buffer CellTypeBuffer {
     int data[];
 } cell_type;
 
+layout(set = 0, binding = 7, std430) restrict buffer SubstanceProperties {
+    // vec2 per substance id. .x = viscosity, .y = flip_ratio
+    vec2 data[];
+} substance_props;
+
 const int CELL_FLUID = 1;
-const float FLIP_RATIO = 0.95;
+const float DEFAULT_FLIP_RATIO = 0.95;  // fallback if substance has no entry
 
 float bilerp_u(float fx, float fy, int w, int h, bool use_old) {
     fx = clamp(fx, 0.0, float(w));
@@ -135,10 +145,19 @@ void main() {
     float u_delta = u_new - u_pre;
     float v_delta = v_new - v_pre;
 
-    // Hybrid PIC/FLIP blend.
+    // Per-substance PIC/FLIP blend. A zero or negative value in the properties
+    // table (e.g. for id 0 or unpopulated slots) falls back to the default.
+    float flip_ratio = DEFAULT_FLIP_RATIO;
+    if (p.substance_id > 0) {
+        float r = substance_props.data[p.substance_id].y;
+        if (r > 0.0) {
+            flip_ratio = r;
+        }
+    }
+
     vec2 flip_vel = p.vel + vec2(u_delta, v_delta);
     vec2 pic_vel = vec2(u_new, v_new);
-    p.vel = mix(pic_vel, flip_vel, FLIP_RATIO);
+    p.vel = mix(pic_vel, flip_vel, flip_ratio);
 
     particles.data[pi] = p;
 }

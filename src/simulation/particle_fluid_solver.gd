@@ -31,6 +31,7 @@ extends RefCounted
 const MAX_PARTICLES := 262144  # 256k. ~6 MB. Enough to fill 200x150 grid at 8/cell.
 const PARTICLE_STRIDE := 24  # bytes: vec2 pos + vec2 vel + int substance + int alive
 const MAX_SUBSTANCES := 64   # size of the substance properties table
+const SUBSTANCE_PROPS_STRIDE := 8  # bytes per substance: vec2(viscosity, flip_ratio)
 const JACOBI_ITERATIONS := 80
 
 ## Fixed internal sub-step dt. The shader constants in pflip_advect.glsl
@@ -309,16 +310,17 @@ func clear() -> void:
 
 func upload_substance_properties() -> void:
 	## Populate the substance properties buffer from SubstanceRegistry.
-	## Currently uploads viscosity. Should be called after setup() and any
-	## time the registry changes.
+	## Layout: vec2 per substance — .x = viscosity, .y = flip_ratio.
+	## Call after setup() and whenever registry entries change.
 	var bytes := PackedByteArray()
-	bytes.resize(MAX_SUBSTANCES * 4)
-	# Index 0 reserved (no substance) — leave as 0.0
+	bytes.resize(MAX_SUBSTANCES * SUBSTANCE_PROPS_STRIDE)
+	# Index 0 reserved (no substance) — leave as zeros.
 	for i in range(1, MAX_SUBSTANCES):
 		var sub := SubstanceRegistry.get_substance(i)
 		if sub:
-			bytes.encode_float(i * 4, sub.viscosity)
-	rd.buffer_update(buf_substance_props, 0, MAX_SUBSTANCES * 4, bytes)
+			bytes.encode_float(i * SUBSTANCE_PROPS_STRIDE + 0, sub.viscosity)
+			bytes.encode_float(i * SUBSTANCE_PROPS_STRIDE + 4, sub.flip_ratio)
+	rd.buffer_update(buf_substance_props, 0, MAX_SUBSTANCES * SUBSTANCE_PROPS_STRIDE, bytes)
 
 
 func get_density_readback() -> PackedFloat32Array:
@@ -415,12 +417,12 @@ func _create_buffers(boundary_mask: PackedByteArray) -> void:
 	buf_v_old = rd.storage_buffer_create(v_size * 4, v_zeros.to_byte_array())
 	buf_v_temp = rd.storage_buffer_create(v_size * 4, v_zeros.to_byte_array())
 
-	# Substance properties table (viscosity per substance id). Defaults to all
-	# zeros (no viscosity); upload_substance_properties() should be called by
-	# the host to populate it from the SubstanceRegistry.
-	var sub_props_zeros := PackedFloat32Array()
-	sub_props_zeros.resize(MAX_SUBSTANCES)
-	buf_substance_props = rd.storage_buffer_create(MAX_SUBSTANCES * 4, sub_props_zeros.to_byte_array())
+	# Substance properties table. Laid out as vec2[MAX_SUBSTANCES] — each entry
+	# is (viscosity, flip_ratio). Defaults to zeros; upload_substance_properties()
+	# populates it from the SubstanceRegistry.
+	var sub_props_zeros := PackedByteArray()
+	sub_props_zeros.resize(MAX_SUBSTANCES * SUBSTANCE_PROPS_STRIDE)
+	buf_substance_props = rd.storage_buffer_create(MAX_SUBSTANCES * SUBSTANCE_PROPS_STRIDE, sub_props_zeros)
 
 	# Density buffers (count as uint, float as float)
 	var cell_zeros_i := PackedInt32Array()
@@ -528,6 +530,7 @@ func _create_pipelines() -> void:
 		[4, buf_u_old],
 		[5, buf_v_old],
 		[6, buf_cell_type],
+		[7, buf_substance_props],
 	])
 
 	# advect

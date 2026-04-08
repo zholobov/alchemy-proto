@@ -31,9 +31,8 @@ layout(set = 0, binding = 2, std430) restrict buffer SubstanceBuffer {
 } substance;
 
 layout(set = 0, binding = 3, std430) restrict buffer SubstanceProperties {
-    // Indexed by substance id. Index 0 is reserved (no substance).
-    // For now stores only viscosity; can be extended to a struct later.
-    float viscosity[];
+    // vec2 per substance id. .x = viscosity, .y = flip_ratio (used in g2p).
+    vec2 data[];
 } substance_props;
 
 layout(set = 0, binding = 4, std430) restrict buffer UVelIn {
@@ -68,14 +67,14 @@ float face_visc(int idx_a, int idx_b, int w, int h) {
     if (idx_a >= 0 && idx_a < w * h) {
         int s = substance.data[idx_a];
         if (s > 0 && cell_type.data[idx_a] == CELL_FLUID) {
-            v += substance_props.viscosity[s];
+            v += substance_props.data[s].x;
             n += 1;
         }
     }
     if (idx_b >= 0 && idx_b < w * h) {
         int s = substance.data[idx_b];
         if (s > 0 && cell_type.data[idx_b] == CELL_FLUID) {
-            v += substance_props.viscosity[s];
+            v += substance_props.data[s].x;
             n += 1;
         }
     }

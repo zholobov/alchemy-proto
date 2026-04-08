@@ -8,6 +8,7 @@ substance_name = "Oil"
 phase = 2
 density = 0.8
 viscosity = 0.7
+flip_ratio = 0.8
 melting_point = -20.0
 boiling_point = 300.0
 flash_point = 210.0
