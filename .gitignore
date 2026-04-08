@@ -1,7 +1,10 @@
 # Godot
 .godot/
 *.import
-export_presets.cfg
+
+# Build output
+build/
+export_presets.cfg.bak
 
 # OS
 .DS_Store
