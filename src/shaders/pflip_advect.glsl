@@ -42,11 +42,18 @@ const float GRAVITY = 60.0;        // cells per second^2 (Tier 1 tuning)
 const float MAX_VELOCITY = 100.0;  // CFL: at 120 FPS, max move = 100/120 = 0.83 cells
 
 // Per-substance drag (linear velocity damping). drag = visc * DRAG_SCALE.
-// Only applied when the particle is surrounded by other particles (in a pool),
-// so falling drops in air still free-fall under gravity. The density threshold
-// distinguishes "lone drop" (low density) from "pool member" (high density).
+// Two conditions must be met for drag to apply:
+//   1. local density >= POOL_DENSITY_THRESHOLD (the particle is in a pool, not
+//      a lone drop)
+//   2. particle speed < DRAG_SPEED_FALLOFF (the particle is "settled", not
+//      free-falling). Drag fades out smoothly as speed approaches the falloff.
+//
+// This way a falling BLOB (dense but fast-moving) doesn't get drag and falls
+// at the same rate as escaped drops, while a SETTLED POOL (dense and slow)
+// does get drag and feels sluggish.
 const float DRAG_SCALE = 4.0;
 const float POOL_DENSITY_THRESHOLD = 0.5;  // half of target → 4 of 8 particles per cell
+const float DRAG_SPEED_FALLOFF = 50.0;     // drag = 0 at this speed and above
 
 bool is_wall(int cx, int cy, int w, int h) {
     if (cx < 0 || cx >= w || cy < 0 || cy >= h) return true;
@@ -66,15 +73,18 @@ void main() {
     // Apply gravity (only y component, downward in screen coords).
     p.vel.y += GRAVITY * params.delta_time;
 
-    // Density-conditional drag: only apply drag when the particle is in a
-    // pool (high local density). Falling drops in air have only themselves
-    // in their cell (low density) and free-fall under gravity unimpeded.
+    // Density-and-speed-conditional drag. Drag only applies if the particle
+    // is in a dense region AND moving slowly (settled in a pool). A falling
+    // blob is dense but fast → no drag, falls at same rate as lone drops.
     int dcx = clamp(int(floor(p.pos.x)), 0, w - 1);
     int dcy = clamp(int(floor(p.pos.y)), 0, h - 1);
     float local_density = density_field.data[dcy * w + dcx];
 
     if (p.substance_id > 0 && local_density >= POOL_DENSITY_THRESHOLD) {
-        float drag = substance_props.viscosity[p.substance_id] * DRAG_SCALE;
+        float speed = length(p.vel);
+        // Linear falloff: full drag at speed=0, zero drag at speed >= falloff
+        float speed_factor = clamp(1.0 - speed / DRAG_SPEED_FALLOFF, 0.0, 1.0);
+        float drag = substance_props.viscosity[p.substance_id] * DRAG_SCALE * speed_factor;
         p.vel *= max(0.0, 1.0 - drag * params.delta_time);
     }
 
