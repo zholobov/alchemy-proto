@@ -99,19 +99,42 @@ void main() {
     // Tentative new position.
     vec2 new_pos = p.pos + p.vel * params.delta_time;
 
-    // Resolve x collision: if the new x cell is a wall, clamp x and zero vel.x.
-    int new_cx = int(floor(new_pos.x));
+    // Resolve x then y independently, so particles slide along walls instead
+    // of sticking at inside corners. On a wall hit we clamp the particle to
+    // the edge of its CURRENT cell closest to the attempted-move direction,
+    // which preserves the valid fraction of the motion. (Previously we reset
+    // position to p.pos, losing any progress this sub-step.)
+    //
+    // SAFE_MARGIN keeps the particle unambiguously inside the current cell
+    // after clamping, avoiding floating-point edge-classification issues.
+    const float SAFE_MARGIN = 0.001;
+
+    int old_cx = int(floor(p.pos.x));
     int old_cy = int(floor(p.pos.y));
+
+    int new_cx = int(floor(new_pos.x));
     if (is_wall(new_cx, old_cy, w, h)) {
-        new_pos.x = p.pos.x;
+        // Would enter a wall cell — clamp to the matching edge of old_cx.
+        if (new_cx > old_cx) {
+            new_pos.x = float(old_cx + 1) - SAFE_MARGIN;  // moving right, cling to right edge
+        } else if (new_cx < old_cx) {
+            new_pos.x = float(old_cx) + SAFE_MARGIN;       // moving left, cling to left edge
+        } else {
+            new_pos.x = p.pos.x;  // already inside a wall somehow — don't move
+        }
         p.vel.x = 0.0;
-        new_cx = int(floor(new_pos.x));
     }
 
-    // Resolve y collision similarly.
+    int resolved_cx = int(floor(new_pos.x));
     int new_cy = int(floor(new_pos.y));
-    if (is_wall(new_cx, new_cy, w, h)) {
-        new_pos.y = p.pos.y;
+    if (is_wall(resolved_cx, new_cy, w, h)) {
+        if (new_cy > old_cy) {
+            new_pos.y = float(old_cy + 1) - SAFE_MARGIN;   // moving down, cling to bottom edge
+        } else if (new_cy < old_cy) {
+            new_pos.y = float(old_cy) + SAFE_MARGIN;        // moving up, cling to top edge
+        } else {
+            new_pos.y = p.pos.y;
+        }
         p.vel.y = 0.0;
     }
 
