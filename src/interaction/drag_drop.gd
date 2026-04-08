@@ -52,9 +52,12 @@ func _process(_delta: float) -> void:
 	_drag_visual.global_position = mouse_pos - _drag_visual.size / 2
 
 	if Input.is_mouse_button_pressed(MOUSE_BUTTON_LEFT):
-		match active_phase:
-			SubstanceDef.Phase.LIQUID, SubstanceDef.Phase.POWDER:
-				pouring.emit(active_substance_id, mouse_pos)
+		# LIQUID is polled directly by main.gd so the spawn runs BEFORE
+		# fluid_solver.step() within the same _process call (matches the
+		# test scene's spawn-then-step ordering). POWDER still uses the
+		# signal path since its sim isn't CFL-sensitive.
+		if active_phase == SubstanceDef.Phase.POWDER:
+			pouring.emit(active_substance_id, mouse_pos)
 
 
 func _input(event: InputEvent) -> void:

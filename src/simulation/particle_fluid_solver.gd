@@ -33,6 +33,19 @@ const PARTICLE_STRIDE := 24  # bytes: vec2 pos + vec2 vel + int substance + int 
 const MAX_SUBSTANCES := 64   # size of the substance properties table
 const JACOBI_ITERATIONS := 80
 
+## Fixed internal sub-step dt. The shader constants in pflip_advect.glsl
+## (MAX_VELOCITY=100, GRAVITY=60, DRAG_SPEED_FALLOFF=50) and
+## pflip_density_correction.glsl (DENSITY_STIFFNESS=500) were tuned assuming
+## this per-step dt. step() sub-steps internally so the solver always sees
+## this dt regardless of the caller's frame rate. DO NOT change TARGET_DT
+## without retuning those shader constants in tandem — CFL violation at
+## larger dt causes a particle-ejection cascade that blows the blob apart.
+const TARGET_DT := 0.0083   # = 1/120s, matches the "CFL: at 120 FPS" comment in pflip_advect.glsl
+const MAX_FRAME_DT := 0.05  # Hard cap on simulated time per step() call. Below ~20 FPS
+                            # we stop trying to keep up with wall time and let the sim slow.
+const MAX_SUBSTEPS := 8     # Safety cap on sub-step count per frame. Prevents death spiral
+                            # if substepping itself drops FPS further.
+
 var rd: RenderingDevice
 var width: int
 var height: int
@@ -147,10 +160,31 @@ func setup(w: int, h: int, boundary_mask: PackedByteArray = PackedByteArray()) -
 	print("ParticleFluidSolver initialized: %dx%d, max %d particles" % [w, h, MAX_PARTICLES])
 
 
-func step(delta: float) -> void:
-	# Clamp dt to prevent scene-load spikes from causing instability.
-	delta = clampf(delta, 0.0, 0.033)
-	_update_params(delta)
+func step(frame_delta: float) -> void:
+	## Advance the simulation by `frame_delta` seconds of wall time.
+	## Internally sub-steps so each underlying integration uses a fixed dt
+	## of TARGET_DT (matching the FPS the shader constants were tuned for).
+	## _readback() runs once at the end — sub-stepping does not increase
+	## GPU-to-CPU stall count.
+	frame_delta = clampf(frame_delta, 0.0, MAX_FRAME_DT)
+	if frame_delta <= 0.0:
+		_readback()
+		return
+
+	var num_substeps := maxi(1, ceili(frame_delta / TARGET_DT))
+	num_substeps = mini(num_substeps, MAX_SUBSTEPS)
+	var sub_delta := frame_delta / float(num_substeps)
+
+	for i in range(num_substeps):
+		_single_step(sub_delta)
+
+	_readback()
+
+
+func _single_step(sub_delta: float) -> void:
+	## One full PIC/FLIP pipeline pass at the given dt. Does NOT read back —
+	## the outer step() handles that after all sub-steps finish.
+	_update_params(sub_delta)
 
 	# Pass 1: clear grid accumulators
 	_dispatch(pipeline_clear_grid, uset_clear_grid, groups_grid_x, groups_grid_y)
@@ -223,8 +257,6 @@ func step(delta: float) -> void:
 
 	# Pass 14: move particles + boundary collision
 	_dispatch(pipeline_advect, uset_advect, groups_part, 1)
-
-	_readback()
 
 
 func spawn_particle(pos_x: float, pos_y: float, substance_id: int = 1) -> bool:

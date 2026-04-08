@@ -161,9 +161,27 @@ func _input(event: InputEvent) -> void:
 		elif key == KEY_F:
 			# Flood fill for stress testing.
 			_flood_fill()
+		elif key == KEY_F6:
+			# Center blob scenario (mirrors tests/pflip_test.gd:186-199).
+			_scenario_center_blob()
+		elif key == KEY_F7:
+			# Top stream scenario (mirrors tests/pflip_test.gd:202-212).
+			_scenario_top_stream()
+		elif key == KEY_F8:
+			# Column scenario (mirrors tests/pflip_test.gd:215-224).
+			_scenario_column()
 
 
 func _process(delta: float) -> void:
+	# Poll liquid pouring BEFORE stepping the fluid solver so newly-spawned
+	# particles participate in this frame's simulation (matches the test
+	# scene's spawn-then-step ordering inside a single _process call).
+	# drag_drop's signal path is still used for POWDER.
+	if drag_drop.is_dragging and Input.is_mouse_button_pressed(MOUSE_BUTTON_LEFT):
+		var active_sub := SubstanceRegistry.get_substance(drag_drop.active_substance_id)
+		if active_sub and active_sub.phase == SubstanceDef.Phase.LIQUID:
+			_on_substance_pouring(drag_drop.active_substance_id, drag_drop.get_global_mouse_position())
+
 	# --- Simulation (spec order: rigid bodies, fluid, particles) ---
 	perf_monitor.begin_timing("GPU Sim")
 	receptacle.gpu_sim.step(delta)
@@ -316,3 +334,63 @@ func _on_containment_failure() -> void:
 					grid.clear_cell(x, y)
 	receptacle.fluid.markers.fill(0)
 	pressure_field.reset()
+
+
+# --- Test scene parity scenarios (for A/B behavior comparison) ---
+# These mirror tests/pflip_test.gd:186-224 exactly so the game and test
+# scene can be compared from identical initial conditions. Reset first,
+# then spawn into receptacle.fluid_solver using the same loops and jitter.
+
+func _scenario_center_blob() -> void:
+	_clear_receptacle()
+	var water_id := SubstanceRegistry.get_id("Water")
+	if water_id <= 0:
+		return
+	var cx: int = Receptacle.GRID_WIDTH / 2
+	var cy: int = Receptacle.GRID_HEIGHT / 3
+	var positions: Array[Vector2] = []
+	for dy in range(-6, 7):
+		for dx in range(-6, 7):
+			if dx * dx + dy * dy > 36:
+				continue
+			for ii in range(8):
+				var jx := randf() * 0.8 + 0.1
+				var jy := randf() * 0.8 + 0.1
+				positions.append(Vector2(cx + dx + jx, cy + dy + jy))
+	receptacle.fluid_solver.spawn_particles_batch(positions, water_id)
+	game_log.log_event("Center blob scenario (%d particles)" % positions.size(), Color.CYAN)
+
+
+func _scenario_top_stream() -> void:
+	_clear_receptacle()
+	var water_id := SubstanceRegistry.get_id("Water")
+	if water_id <= 0:
+		return
+	var cx: int = Receptacle.GRID_WIDTH / 2
+	var cy := 5
+	var positions: Array[Vector2] = []
+	for dy in range(0, 8):
+		for dx in range(-2, 3):
+			for ii in range(8):
+				var jx := randf() * 0.8 + 0.1
+				var jy := randf() * 0.8 + 0.1
+				positions.append(Vector2(cx + dx + jx, cy + dy + jy))
+	receptacle.fluid_solver.spawn_particles_batch(positions, water_id)
+	game_log.log_event("Top stream scenario (%d particles)" % positions.size(), Color.CYAN)
+
+
+func _scenario_column() -> void:
+	_clear_receptacle()
+	var water_id := SubstanceRegistry.get_id("Water")
+	if water_id <= 0:
+		return
+	var cx: int = Receptacle.GRID_WIDTH / 2
+	var positions: Array[Vector2] = []
+	for y in range(5, 60):
+		for dx in range(-2, 3):
+			for ii in range(8):
+				var jx := randf() * 0.8 + 0.1
+				var jy := randf() * 0.8 + 0.1
+				positions.append(Vector2(cx + dx + jx, y + jy))
+	receptacle.fluid_solver.spawn_particles_batch(positions, water_id)
+	game_log.log_event("Column scenario (%d particles)" % positions.size(), Color.CYAN)
