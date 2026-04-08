@@ -226,28 +226,40 @@ func _on_substance_dropped(substance_id: int, phase: SubstanceDef.Phase, pos: Ve
 
 
 func _on_substance_pouring(substance_id: int, pos: Vector2) -> void:
-	var grid_pos := receptacle.screen_to_grid(pos)
 	var substance := SubstanceRegistry.get_substance(substance_id)
 	if not substance:
 		return
 
-	var positions: Array[Vector2i] = []
-	var radius := 2
-	for dy in range(-radius, radius + 1):
-		for dx in range(-radius, radius + 1):
-			if dx * dx + dy * dy <= radius * radius:
-				positions.append(Vector2i(grid_pos.x + dx, grid_pos.y + dy))
-
 	if substance.phase == SubstanceDef.Phase.LIQUID:
-		# Liquids spawn into the PIC/FLIP particle fluid solver. Spawn multiple
-		# particles per cell (with jitter) to reach the solver's target density.
+		# Liquids spawn into the PIC/FLIP particle fluid solver. Mirrors the
+		# test scene (tests/pflip_test.gd): fractional cursor coordinates,
+		# 8 jittered particles per cell in a radius-2 circle, jitter 0.1-0.9
+		# to keep particles away from cell corners.
+		var local := pos - receptacle.global_position
+		var gx := local.x / float(Receptacle.CELL_SIZE)
+		var gy := local.y / float(Receptacle.CELL_SIZE)
+		if gx < 0 or gx >= Receptacle.GRID_WIDTH or gy < 0 or gy >= Receptacle.GRID_HEIGHT:
+			return
 		var particle_positions: Array[Vector2] = []
-		for p in positions:
-			for i in range(4):  # 4 particles per cell per frame (accumulate over multiple frames)
-				particle_positions.append(Vector2(float(p.x) + randf(), float(p.y) + randf()))
+		var radius := 2
+		for dy in range(-radius, radius + 1):
+			for dx in range(-radius, radius + 1):
+				if dx * dx + dy * dy > radius * radius:
+					continue
+				for i in range(8):
+					var jx := randf() * 0.8 + 0.1
+					var jy := randf() * 0.8 + 0.1
+					particle_positions.append(Vector2(gx + dx + jx, gy + dy + jy))
 		receptacle.fluid_solver.spawn_particles_batch(particle_positions, substance_id)
 	else:
-		# Powders and other phases use the particle grid.
+		# Powders and other phases use the integer-grid particle system.
+		var grid_pos := receptacle.screen_to_grid(pos)
+		var positions: Array[Vector2i] = []
+		var radius := 2
+		for dy in range(-radius, radius + 1):
+			for dx in range(-radius, radius + 1):
+				if dx * dx + dy * dy <= radius * radius:
+					positions.append(Vector2i(grid_pos.x + dx, grid_pos.y + dy))
 		receptacle.gpu_sim.spawn_cells(positions, substance_id)
 
 
@@ -285,7 +297,9 @@ func _flood_fill() -> void:
 		var particle_positions: Array[Vector2] = []
 		for p in positions:
 			for i in range(8):
-				particle_positions.append(Vector2(float(p.x) + randf(), float(p.y) + randf()))
+				var jx := randf() * 0.8 + 0.1
+				var jy := randf() * 0.8 + 0.1
+				particle_positions.append(Vector2(float(p.x) + jx, float(p.y) + jy))
 		receptacle.fluid_solver.spawn_particles_batch(particle_positions, _selected_substance_id)
 	else:
 		receptacle.gpu_sim.spawn_cells(positions, _selected_substance_id)

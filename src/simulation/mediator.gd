@@ -176,11 +176,13 @@ func _check_phase_changes_sparse() -> void:
 		if new_sub.phase == SubstanceDef.Phase.LIQUID:
 			grid.clear_cell(x, y)
 			if particle_fluid_solver:
-				# Spawn a cell's worth of particles with jitter so the new
-				# liquid is immediately visible after the phase change.
+				# Spawn 8 jittered particles (full target density). Same jitter
+				# range as pouring/flood-fill/test scene for consistency.
 				var positions: Array[Vector2] = []
 				for j in range(8):
-					positions.append(Vector2(float(x) + randf(), float(y) + randf()))
+					var jx := randf() * 0.8 + 0.1
+					var jy := randf() * 0.8 + 0.1
+					positions.append(Vector2(float(x) + jx, float(y) + jy))
 				particle_fluid_solver.spawn_particles_batch(positions, new_id)
 			else:
 				fluid.spawn_fluid(x, y, new_id)

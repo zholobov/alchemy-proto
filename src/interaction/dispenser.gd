@@ -73,12 +73,14 @@ func _emit_particle(screen_pos: Vector2) -> void:
 
 	var pos := Vector2i(gx, gy)
 	if sub.phase == SubstanceDef.Phase.LIQUID and _fluid_solver:
-		# Liquids spawn into the PIC/FLIP particle solver. Spawn 4 jittered
-		# particles for the single dispenser cell to build up density over
-		# multiple frames of continuous dispensing.
+		# Liquids spawn into the PIC/FLIP particle solver. Spawn 8 jittered
+		# particles per cell (matches the target density and the pflip_test
+		# scene's pouring behavior).
 		var particle_positions: Array[Vector2] = []
-		for i in range(4):
-			particle_positions.append(Vector2(float(gx) + randf(), float(gy) + randf()))
+		for i in range(8):
+			var jx := randf() * 0.8 + 0.1
+			var jy := randf() * 0.8 + 0.1
+			particle_positions.append(Vector2(float(gx) + jx, float(gy) + jy))
 		_fluid_solver.spawn_particles_batch(particle_positions, substance_id)
 	elif _gpu_sim:
 		_gpu_sim.spawn_cells([pos], substance_id)
