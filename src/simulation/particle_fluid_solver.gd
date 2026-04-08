@@ -167,21 +167,8 @@ func step(delta: float) -> void:
 	# Pass 5: zero wall-adjacent velocities
 	_dispatch(pipeline_wall_zero, uset_wall_zero, groups_grid_x, groups_grid_y)
 
-	# Pass 5b: extrapolate fluid velocities into adjacent air cells. This
-	# MUST happen BEFORE save_vel so the FLIP delta in g2p doesn't capture
-	# the artificial difference between "raw p2g" (saved) and "extrapolated"
-	# (current) for air cells near the fluid surface. Otherwise particles in
-	# those air cells get a fake upward kick from the FLIP delta when the
-	# pool's pressure-corrected velocity (which is anti-gravity at the
-	# surface) is propagated upward. Run twice for a 2-cell layer.
-	for i in range(2):
-		_dispatch(pipeline_extrapolate, uset_extrapolate, groups_grid_x, groups_grid_y)
-		rd.buffer_copy(buf_u_temp, buf_u_vel, 0, 0, u_size * 4)
-		rd.buffer_copy(buf_v_temp, buf_v_vel, 0, 0, v_size * 4)
-
 	# Pass 6: snapshot velocities for FLIP delta (= pressure correction only).
 	# Gravity is NOT applied here — it's applied per-particle in advect.
-	# At this point u_vel/v_vel contain the extrapolated raw p2g state.
 	_dispatch(pipeline_save_vel, uset_save_vel, groups_grid_x, groups_grid_y)
 
 	# Pass 7: compute divergence
@@ -212,9 +199,18 @@ func step(delta: float) -> void:
 	# Pass 11: apply pressure gradient to velocities
 	_dispatch(pipeline_gradient, uset_gradient, groups_grid_x, groups_grid_y)
 
-	# Pass 11b: per-substance viscosity. Reads u_vel/v_vel, writes u_temp/v_temp,
-	# then we copy temp back. Runs after gradient so the viscosity correction
-	# is part of the (current - saved) FLIP delta.
+	# Pass 11b: extrapolate fluid velocities into adjacent air cells. Each pass
+	# extends the valid velocity field by 1 cell. This gives particles near the
+	# fluid surface valid grid velocities to gather from in g2p, smoothing out
+	# the boundary discontinuity. Run twice for a 2-cell extrapolation layer.
+	for i in range(2):
+		_dispatch(pipeline_extrapolate, uset_extrapolate, groups_grid_x, groups_grid_y)
+		rd.buffer_copy(buf_u_temp, buf_u_vel, 0, 0, u_size * 4)
+		rd.buffer_copy(buf_v_temp, buf_v_vel, 0, 0, v_size * 4)
+
+	# Pass 11c: per-substance viscosity. Reads u_vel/v_vel, writes u_temp/v_temp,
+	# then we copy temp back. Runs after gradient and extrapolation so the
+	# viscosity correction is part of the (current - saved) FLIP delta.
 	_dispatch(pipeline_viscosity, uset_viscosity, groups_grid_x, groups_grid_y)
 	rd.buffer_copy(buf_u_temp, buf_u_vel, 0, 0, u_size * 4)
 	rd.buffer_copy(buf_v_temp, buf_v_vel, 0, 0, v_size * 4)
