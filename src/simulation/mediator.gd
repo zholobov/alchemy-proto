@@ -7,6 +7,7 @@ extends RefCounted
 var grid: ParticleGrid
 var liquid: LiquidReadback  ## Read-only CPU snapshot of the PIC/FLIP fluid solver.
 var particle_fluid_solver: ParticleFluidSolver  # for creating liquid particles on phase change
+var vapor_sim: VaporSim  ## Grid MAC solver for gases — written to when reactions produce vapor.
 var game_log: GameLog
 var rigid_body_mgr: RigidBodyMgr
 
@@ -185,7 +186,12 @@ func _check_phase_changes_sparse() -> void:
 					positions.append(Vector2(float(x) + jx, float(y) + jy))
 				particle_fluid_solver.spawn_particles_batch(positions, new_id)
 		elif new_sub.phase == SubstanceDef.Phase.GAS:
-			grid.cells[i] = new_id
+			# Phase change to gas (e.g. water boiling to steam). Clear the
+			# source cell and emit a vapor marker in VaporSim so the result
+			# drifts and swirls in the gas sim, not the grid sim.
+			grid.clear_cell(x, y)
+			if vapor_sim:
+				vapor_sim.spawn(x, y, new_id)
 		else:
 			grid.cells[i] = new_id
 
@@ -246,13 +252,18 @@ func _apply_heat(x: int, y: int, amount: float) -> void:
 
 
 func _spawn_gas(x: int, y: int, gas_name: String) -> void:
+	## Emit gas from a reaction site into VaporSim. Tries cells above the
+	## reaction point first so the gas visibly emerges upward; falls back
+	## to the reaction cell itself if all three cells above are occupied.
 	var gas_id := SubstanceRegistry.get_id(gas_name)
-	if gas_id <= 0:
+	if gas_id <= 0 or not vapor_sim:
 		return
 	for dy in range(-3, 0):
 		var ny := y + dy
-		if grid.is_empty(x, ny):
-			grid.spawn_particle(x, ny, gas_id)
+		if vapor_sim.spawn(x, ny, gas_id):
 			return
+	# All three cells above are occupied or walls — fall back to spawning
+	# at the reaction site itself if possible.
+	vapor_sim.spawn(x, y, gas_id)
 
 

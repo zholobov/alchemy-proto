@@ -89,6 +89,7 @@ func _ready() -> void:
 	mediator.setup(receptacle.grid, receptacle.liquid_readback, game_log)
 	mediator.rigid_body_mgr = receptacle.rigid_body_mgr
 	mediator.particle_fluid_solver = receptacle.fluid_solver
+	mediator.vapor_sim = receptacle.vapor_sim
 
 	# Create fields — all share the same boundary.
 	var gw := Receptacle.GRID_WIDTH
