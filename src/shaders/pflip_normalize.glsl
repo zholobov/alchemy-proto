@@ -18,19 +18,19 @@ layout(set = 0, binding = 0, std430) restrict buffer Params {
 } params;
 
 layout(set = 0, binding = 1, std430) restrict buffer UVel {
-    uint data[];  // packed float, becomes plain float-as-uint after this pass
+    float data[];
 } u_vel;
 
 layout(set = 0, binding = 2, std430) restrict buffer VVel {
-    uint data[];
+    float data[];
 } v_vel;
 
 layout(set = 0, binding = 3, std430) restrict buffer UWeights {
-    uint data[];
+    float data[];
 } u_weights;
 
 layout(set = 0, binding = 4, std430) restrict buffer VWeights {
-    uint data[];
+    float data[];
 } v_weights;
 
 layout(set = 0, binding = 5, std430) restrict buffer DensityCount {
@@ -52,24 +52,22 @@ void main() {
     // Normalize u faces: (w+1) x h
     if (x <= w && y < h) {
         uint u_idx = uint(y * (w + 1) + x);
-        float wt = uintBitsToFloat(u_weights.data[u_idx]);
+        float wt = u_weights.data[u_idx];
         if (wt > 1e-6) {
-            float vel = uintBitsToFloat(u_vel.data[u_idx]);
-            u_vel.data[u_idx] = floatBitsToUint(vel / wt);
+            u_vel.data[u_idx] = u_vel.data[u_idx] / wt;
         } else {
-            u_vel.data[u_idx] = floatBitsToUint(0.0);
+            u_vel.data[u_idx] = 0.0;
         }
     }
 
     // Normalize v faces: w x (h+1)
     if (x < w && y <= h) {
         uint v_idx = uint(y * w + x);
-        float wt = uintBitsToFloat(v_weights.data[v_idx]);
+        float wt = v_weights.data[v_idx];
         if (wt > 1e-6) {
-            float vel = uintBitsToFloat(v_vel.data[v_idx]);
-            v_vel.data[v_idx] = floatBitsToUint(vel / wt);
+            v_vel.data[v_idx] = v_vel.data[v_idx] / wt;
         } else {
-            v_vel.data[v_idx] = floatBitsToUint(0.0);
+            v_vel.data[v_idx] = 0.0;
         }
     }
 

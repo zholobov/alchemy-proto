@@ -15,19 +15,19 @@ layout(set = 0, binding = 0, std430) restrict buffer Params {
 } params;
 
 layout(set = 0, binding = 1, std430) restrict buffer UVel {
-    uint data[];  // packed float bits, used with atomic compswap
+    float data[];
 } u_vel;
 
 layout(set = 0, binding = 2, std430) restrict buffer VVel {
-    uint data[];
+    float data[];
 } v_vel;
 
 layout(set = 0, binding = 3, std430) restrict buffer UWeights {
-    uint data[];
+    float data[];
 } u_weights;
 
 layout(set = 0, binding = 4, std430) restrict buffer VWeights {
-    uint data[];
+    float data[];
 } v_weights;
 
 layout(set = 0, binding = 5, std430) restrict buffer Density {
@@ -48,12 +48,12 @@ void main() {
     // For simplicity, we dispatch over max(w+1, w) x max(h, h+1) and check bounds per buffer.
 
     if (x <= w && y < h) {
-        u_vel.data[y * (w + 1) + x] = 0u;
-        u_weights.data[y * (w + 1) + x] = 0u;
+        u_vel.data[y * (w + 1) + x] = 0.0;
+        u_weights.data[y * (w + 1) + x] = 0.0;
     }
     if (x < w && y <= h) {
-        v_vel.data[y * w + x] = 0u;
-        v_weights.data[y * w + x] = 0u;
+        v_vel.data[y * w + x] = 0.0;
+        v_weights.data[y * w + x] = 0.0;
     }
     if (x < w && y < h) {
         density.data[y * w + x] = 0u;

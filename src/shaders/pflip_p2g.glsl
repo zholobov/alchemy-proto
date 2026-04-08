@@ -1,9 +1,17 @@
 #[compute]
 #version 450
 
+// Native float atomics. Requires the VK_EXT_shader_atomic_float device
+// extension which Godot 4.6 enables by default on every desktop platform we
+// target (NVIDIA Maxwell+, AMD GCN3+, Intel Tiger Lake+, Apple Silicon via
+// MoltenVK). Replaces the pre-C4 implementation which used atomicCompSwap
+// loops on uint-reinterpreted float bits; the loop was correct but hot-path
+// contention in dense cells (8 particles writing to the same face every
+// step) was making p2g the single most expensive pass in the pipeline.
+#extension GL_EXT_shader_atomic_float : require
+
 // Particle-to-Grid scatter. Each particle deposits its velocity onto the
 // surrounding 4 MAC-grid u-faces and 4 v-faces using bilinear weights.
-// Atomic float add is implemented via atomicCompSwap (no native float atomic).
 // Also accumulates a particle count per cell ("density") and writes the
 // substance id (last writer wins, visual only).
 
@@ -28,19 +36,19 @@ layout(set = 0, binding = 1, std430) restrict buffer ParticleBuffer {
 } particles;
 
 layout(set = 0, binding = 2, std430) restrict buffer UVel {
-    uint data[];  // packed float bits
+    float data[];
 } u_vel;
 
 layout(set = 0, binding = 3, std430) restrict buffer VVel {
-    uint data[];
+    float data[];
 } v_vel;
 
 layout(set = 0, binding = 4, std430) restrict buffer UWeights {
-    uint data[];
+    float data[];
 } u_weights;
 
 layout(set = 0, binding = 5, std430) restrict buffer VWeights {
-    uint data[];
+    float data[];
 } v_weights;
 
 layout(set = 0, binding = 6, std430) restrict buffer Density {
@@ -50,52 +58,6 @@ layout(set = 0, binding = 6, std430) restrict buffer Density {
 layout(set = 0, binding = 7, std430) restrict buffer Substance {
     int data[];
 } substance;
-
-// Atomic float add via compare-and-swap loop.
-// Reinterprets the uint slot as a float, adds val, and CAS-writes back.
-void atomicAddFloatU(uint slot, float val) {
-    uint expected;
-    uint new_val;
-    uint old_val = u_vel.data[slot];
-    do {
-        expected = old_val;
-        new_val = floatBitsToUint(uintBitsToFloat(expected) + val);
-        old_val = atomicCompSwap(u_vel.data[slot], expected, new_val);
-    } while (old_val != expected);
-}
-
-void atomicAddFloatV(uint slot, float val) {
-    uint expected;
-    uint new_val;
-    uint old_val = v_vel.data[slot];
-    do {
-        expected = old_val;
-        new_val = floatBitsToUint(uintBitsToFloat(expected) + val);
-        old_val = atomicCompSwap(v_vel.data[slot], expected, new_val);
-    } while (old_val != expected);
-}
-
-void atomicAddFloatUW(uint slot, float val) {
-    uint expected;
-    uint new_val;
-    uint old_val = u_weights.data[slot];
-    do {
-        expected = old_val;
-        new_val = floatBitsToUint(uintBitsToFloat(expected) + val);
-        old_val = atomicCompSwap(u_weights.data[slot], expected, new_val);
-    } while (old_val != expected);
-}
-
-void atomicAddFloatVW(uint slot, float val) {
-    uint expected;
-    uint new_val;
-    uint old_val = v_weights.data[slot];
-    do {
-        expected = old_val;
-        new_val = floatBitsToUint(uintBitsToFloat(expected) + val);
-        old_val = atomicCompSwap(v_weights.data[slot], expected, new_val);
-    } while (old_val != expected);
-}
 
 void main() {
     uint pi = gl_GlobalInvocationID.x;
@@ -132,23 +94,23 @@ void main() {
 
         if (x0 >= 0 && x0 <= w && y0 >= 0 && y0 < h) {
             uint si = uint(y0 * (w + 1) + x0);
-            atomicAddFloatU(si, p.vel.x * wt00);
-            atomicAddFloatUW(si, wt00);
+            atomicAdd(u_vel.data[si], p.vel.x * wt00);
+            atomicAdd(u_weights.data[si], wt00);
         }
         if (x1 >= 0 && x1 <= w && y0 >= 0 && y0 < h) {
             uint si = uint(y0 * (w + 1) + x1);
-            atomicAddFloatU(si, p.vel.x * wt10);
-            atomicAddFloatUW(si, wt10);
+            atomicAdd(u_vel.data[si], p.vel.x * wt10);
+            atomicAdd(u_weights.data[si], wt10);
         }
         if (x0 >= 0 && x0 <= w && y1 >= 0 && y1 < h) {
             uint si = uint(y1 * (w + 1) + x0);
-            atomicAddFloatU(si, p.vel.x * wt01);
-            atomicAddFloatUW(si, wt01);
+            atomicAdd(u_vel.data[si], p.vel.x * wt01);
+            atomicAdd(u_weights.data[si], wt01);
         }
         if (x1 >= 0 && x1 <= w && y1 >= 0 && y1 < h) {
             uint si = uint(y1 * (w + 1) + x1);
-            atomicAddFloatU(si, p.vel.x * wt11);
-            atomicAddFloatUW(si, wt11);
+            atomicAdd(u_vel.data[si], p.vel.x * wt11);
+            atomicAdd(u_weights.data[si], wt11);
         }
     }
 
@@ -173,23 +135,23 @@ void main() {
 
         if (x0 >= 0 && x0 < w && y0 >= 0 && y0 <= h) {
             uint si = uint(y0 * w + x0);
-            atomicAddFloatV(si, p.vel.y * wt00);
-            atomicAddFloatVW(si, wt00);
+            atomicAdd(v_vel.data[si], p.vel.y * wt00);
+            atomicAdd(v_weights.data[si], wt00);
         }
         if (x1 >= 0 && x1 < w && y0 >= 0 && y0 <= h) {
             uint si = uint(y0 * w + x1);
-            atomicAddFloatV(si, p.vel.y * wt10);
-            atomicAddFloatVW(si, wt10);
+            atomicAdd(v_vel.data[si], p.vel.y * wt10);
+            atomicAdd(v_weights.data[si], wt10);
         }
         if (x0 >= 0 && x0 < w && y1 >= 0 && y1 <= h) {
             uint si = uint(y1 * w + x0);
-            atomicAddFloatV(si, p.vel.y * wt01);
-            atomicAddFloatVW(si, wt01);
+            atomicAdd(v_vel.data[si], p.vel.y * wt01);
+            atomicAdd(v_weights.data[si], wt01);
         }
         if (x1 >= 0 && x1 < w && y1 >= 0 && y1 <= h) {
             uint si = uint(y1 * w + x1);
-            atomicAddFloatV(si, p.vel.y * wt11);
-            atomicAddFloatVW(si, wt11);
+            atomicAdd(v_vel.data[si], p.vel.y * wt11);
+            atomicAdd(v_weights.data[si], wt11);
         }
     }
 
