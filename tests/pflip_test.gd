@@ -65,9 +65,7 @@ func _ready() -> void:
 	_texture = ImageTexture.create_from_image(_image)
 	_sprite = Sprite2D.new()
 	_sprite.texture = _texture
-	# LINEAR filtering smooths the cell-grid → screen upscaling, which combined
-	# with the box-filter density smoothing in _render() gives a soft fluid surface.
-	_sprite.texture_filter = CanvasItem.TEXTURE_FILTER_LINEAR
+	_sprite.texture_filter = CanvasItem.TEXTURE_FILTER_NEAREST
 	_sprite.scale = Vector2(CELL_SIZE, CELL_SIZE)
 	_sprite.centered = false
 	_sprite.position = Vector2(50, 80)
@@ -113,36 +111,16 @@ func _process(_delta: float) -> void:
 
 
 func _render() -> void:
-	# Smooth density rendering: each cell's display density is the average of
-	# itself and its 8 neighbors (3x3 box filter). This eliminates the
-	# stippled "salt-and-pepper" look caused by per-cell particle count
-	# fluctuation. Combined with TEXTURE_FILTER_LINEAR on the sprite, the
-	# result is a smooth fluid surface instead of pixelated dithering.
 	var density := solver.get_density_readback()
 	for y in range(GRID_H):
 		for x in range(GRID_W):
 			var i := y * GRID_W + x
 			var off := i * 4
+			# Always write the pixel (background or water) so the previous
+			# frame's water doesn't leave a trail when particles move away.
 			var is_wall: bool = _boundary[i] == 0
-
-			# Box-filter the density over 3x3 neighborhood. Out-of-bounds
-			# samples are treated as 0 (no contribution).
-			var sum_d: float = 0.0
-			var count: int = 0
-			for dy in range(-1, 2):
-				var ny := y + dy
-				if ny < 0 or ny >= GRID_H:
-					continue
-				for dx in range(-1, 2):
-					var nx := x + dx
-					if nx < 0 or nx >= GRID_W:
-						continue
-					sum_d += density[ny * GRID_W + nx]
-					count += 1
-			var d: float = sum_d / float(count)
-
-			if d > 0.005:
-				# sqrt curve so low-density cells are still visible
+			var d: float = density[i] if i < density.size() else 0.0
+			if d > 0.001:
 				var alpha: float = sqrt(clampf(d, 0.0, 1.0))
 				_pixels[off] = int(50 * alpha + 15 * (1.0 - alpha))
 				_pixels[off + 1] = int(120 * alpha + 15 * (1.0 - alpha))
