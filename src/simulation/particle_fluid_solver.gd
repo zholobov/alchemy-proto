@@ -703,7 +703,7 @@ func debug_particle_locations(boundary: PackedByteArray) -> Dictionary:
 	## Read back ALL particle positions and count how many are in wall cells.
 	var p_bytes := rd.buffer_get_data(buf_particles, 0, _particle_count * PARTICLE_STRIDE)
 	var in_wall := 0
-	var in_air := 0
+	var _in_air := 0
 	var in_interior := 0
 	var dead := 0
 	var x_min: float = 1e9

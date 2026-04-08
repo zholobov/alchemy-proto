@@ -358,7 +358,9 @@ func _scenario_center_blob() -> void:
 	var water_id := SubstanceRegistry.get_id("Water")
 	if water_id <= 0:
 		return
+	@warning_ignore("integer_division")
 	var cx: int = Receptacle.GRID_WIDTH / 2
+	@warning_ignore("integer_division")
 	var cy: int = Receptacle.GRID_HEIGHT / 3
 	var positions: Array[Vector2] = []
 	for dy in range(-6, 7):
@@ -378,6 +380,7 @@ func _scenario_top_stream() -> void:
 	var water_id := SubstanceRegistry.get_id("Water")
 	if water_id <= 0:
 		return
+	@warning_ignore("integer_division")
 	var cx: int = Receptacle.GRID_WIDTH / 2
 	var cy := 5
 	var positions: Array[Vector2] = []
@@ -396,6 +399,7 @@ func _scenario_column() -> void:
 	var water_id := SubstanceRegistry.get_id("Water")
 	if water_id <= 0:
 		return
+	@warning_ignore("integer_division")
 	var cx: int = Receptacle.GRID_WIDTH / 2
 	var positions: Array[Vector2] = []
 	for y in range(5, 60):
@@ -415,7 +419,9 @@ func _spawn_debug_vapor() -> void:
 	if steam_id <= 0:
 		game_log.log_event("No Steam substance registered", Color.RED)
 		return
+	@warning_ignore("integer_division")
 	var cx: int = Receptacle.GRID_WIDTH / 2
+	@warning_ignore("integer_division")
 	var cy: int = Receptacle.GRID_HEIGHT * 2 / 3
 	var count := 0
 	for dy in range(-4, 5):
