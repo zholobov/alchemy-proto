@@ -43,6 +43,11 @@ layout(set = 0, binding = 5, std430) restrict buffer VOld {
     float data[];
 } v_old;
 
+layout(set = 0, binding = 6, std430) restrict buffer CellTypeBuffer {
+    int data[];
+} cell_type;
+
+const int CELL_FLUID = 1;
 const float FLIP_RATIO = 0.95;
 
 float bilerp_u(float fx, float fy, int w, int h, bool use_old) {
@@ -102,6 +107,16 @@ void main() {
 
     int w = params.grid_width;
     int h = params.grid_height;
+
+    // Skip g2p entirely for air particles. Air particles (sparse cells like
+    // a falling stream) shouldn't read from the grid because the grid contains
+    // velocities polluted by extrapolation and pressure projection at nearby
+    // fluid surfaces. Free fall is governed by gravity alone in advect.
+    int cx = clamp(int(floor(p.pos.x)), 0, w - 1);
+    int cy = clamp(int(floor(p.pos.y)), 0, h - 1);
+    if (cell_type.data[cy * w + cx] != CELL_FLUID) {
+        return;
+    }
 
     // u-grid coordinates: u-face (i, j) is at (i, j+0.5), so to sample at
     // particle position we use (px, py-0.5).

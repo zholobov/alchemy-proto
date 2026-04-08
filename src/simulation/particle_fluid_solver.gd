@@ -495,6 +495,7 @@ func _create_pipelines() -> void:
 		[3, buf_v_vel],
 		[4, buf_u_old],
 		[5, buf_v_old],
+		[6, buf_cell_type],
 	])
 
 	# advect
