@@ -1,5 +1,16 @@
 # Alchemy Prototype — Design Spec
 
+> **Historical note (2026-04-08):** This spec captures the original Apr 5
+> design. The code architecture has since evolved: liquids moved from the
+> CPU `FluidSim` class to GPU PIC/FLIP in `particle_fluid_solver.gd`, gases
+> moved to a GPU grid MAC solver in `vapor_sim.gd` (which is the renamed,
+> repurposed ex-`FluidSolver`), a `LiquidReadback` class was extracted as
+> the CPU snapshot of liquid state, and `gpu_simulation.gd` became the
+> integer-grid powder/solid simulator. The file tree below no longer
+> matches the repo — it's preserved as a historical reference. Read this
+> spec for the property-based reaction design; read the code for the
+> current architecture.
+
 ## Overview
 
 A 2D alchemy simulation game where the player drops, pours, and dispenses substances into a receptacle and watches emergent chemical reactions unfold. The simulation is property-based — reactions emerge from substance properties interacting, not from hardcoded recipes.

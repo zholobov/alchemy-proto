@@ -6,10 +6,10 @@ extends RefCounted
 ## buffers (density_float, substance). Consumers — renderers, fields, the
 ## mediator — read from this class instead of reaching into the solver.
 ##
-## This class is a data container with no simulation of its own. It was
-## extracted from the old FluidSim class so that FluidSim can be repurposed
-## as VaporSim (gas/fog/steam grid simulator) without fighting with the
-## liquid readback path writing to the same arrays.
+## This class is a data container with no simulation of its own. It lives
+## separately from VaporSim (which holds gas state) because the two sims
+## need independent per-cell arrays — when both a liquid and a gas coexist
+## in the same cell they don't overwrite each other's state.
 
 var width: int
 var height: int
