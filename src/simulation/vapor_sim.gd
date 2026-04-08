@@ -1,7 +1,26 @@
-class_name FluidSim
+class_name VaporSim
 extends RefCounted
-## Marker-and-Cell (MAC) grid fluid simulation for liquids.
-## Velocity stored at cell faces, pressure at cell centers.
+## CPU-side grid MAC simulator for gases, mist, fog, and steam.
+##
+## History: this was originally FluidSim, a MAC solver meant for liquids.
+## After the move to PIC/FLIP for liquids, the class sat dormant for a
+## while — but its low-density visual behavior (sparse markers transported
+## through a pressure-projected velocity field) turned out to look exactly
+## like fog/mist/steam. That's what it's for now.
+##
+## Physics:
+##   - Velocity field on a staggered MAC grid (u on vertical faces,
+##     v on horizontal faces)
+##   - Per-substance gravity via gravity_multiplier on SubstanceDef
+##     (negative = buoyant/rising, positive = sinking)
+##   - Gauss-Seidel SOR pressure projection → divergence-free velocity
+##   - Semi-Lagrangian marker transport: each cell's substance id gets
+##     shifted one step along the local velocity each frame
+##
+## Each cell holds one integer substance id; there is no fractional
+## density field inside the sim itself (densities[] is populated later
+## for rendering from a count of non-empty markers, or left as a flat
+## 1.0 for now).
 
 var width: int
 var height: int
@@ -10,20 +29,22 @@ var height: int
 var u: PackedFloat32Array  ## (width+1) * height
 var v: PackedFloat32Array  ## width * (height+1)
 
-## Pressure field.
+## Pressure field used by the SOR solver. Not read outside this class.
 var pressure: PackedFloat32Array  ## width * height
 
-## Fluid markers: substance ID per cell. 0 = no fluid.
+## Per-cell substance id. 0 = no vapor in this cell.
 var markers: PackedInt32Array  ## width * height
 
-## Per-cell density (populated from GPU MAC fluid solver each frame).
-## Used by renderers to scale alpha by density (thinner = more translucent).
+## Per-cell density, populated to match markers presence for rendering.
+## (For the current integer-marker sim, this is just 1.0 where a marker
+## exists and 0.0 where it doesn't. Kept as a float field so renderers
+## can treat it the same as liquid_readback.densities and scale alpha.)
 var densities: PackedFloat32Array  ## width * height
 
 ## Boundary mask — shared with particle grid.
 var boundary: PackedByteArray
 
-const GRAVITY := 200.0  ## Pixels/s^2 in grid units.
+const BASE_GRAVITY := 40.0  ## Pixels/s^2 in grid units. Scaled per substance.
 const PRESSURE_ITERATIONS := 20
 const OVERRELAX := 1.9  ## SOR overrelaxation factor.
 
@@ -54,7 +75,7 @@ func is_valid(x: int, y: int) -> bool:
 	return x >= 0 and x < width and y >= 0 and y < height and boundary[idx(x, y)] == 1
 
 
-func is_fluid(x: int, y: int) -> bool:
+func is_occupied(x: int, y: int) -> bool:
 	return is_valid(x, y) and markers[idx(x, y)] != 0
 
 
@@ -68,7 +89,9 @@ func v_idx(x: int, y: int) -> int:
 	return y * width + x
 
 
-func spawn_fluid(x: int, y: int, substance_id: int) -> bool:
+func spawn(x: int, y: int, substance_id: int) -> bool:
+	## Emit vapor of the given substance at cell (x, y). Returns true on
+	## success, false if the cell is a wall or already occupied.
 	if is_valid(x, y) and markers[idx(x, y)] == 0:
 		markers[idx(x, y)] = substance_id
 		return true
@@ -80,7 +103,15 @@ func clear_cell(x: int, y: int) -> void:
 		markers[idx(x, y)] = 0
 
 
-func count_fluid_cells() -> int:
+func clear_all() -> void:
+	markers.fill(0)
+	densities.fill(0.0)
+	u.fill(0.0)
+	v.fill(0.0)
+	pressure.fill(0.0)
+
+
+func count_occupied_cells() -> int:
 	var count := 0
 	for i in range(markers.size()):
 		if markers[i] != 0:
@@ -89,22 +120,29 @@ func count_fluid_cells() -> int:
 
 
 func update(delta: float) -> void:
-	## Full fluid simulation step. Skip if no fluid present.
-	if count_fluid_cells() == 0:
+	## Full simulation step. Skip if no vapor present.
+	if count_occupied_cells() == 0:
 		return
 	_apply_gravity(delta)
 	_project()
 	_advect_markers(delta)
+	_refresh_densities()
 
 
 func _apply_gravity(delta: float) -> void:
-	## Apply gravity to vertical velocity of fluid cells.
+	## Apply per-substance gravity to the bottom-face v-velocity of occupied
+	## cells. Positive gravity_multiplier pulls down (liquids/heavy smoke),
+	## negative pulls up (steam, mist, hot air).
 	for y in range(height):
 		for x in range(width):
-			if not is_fluid(x, y):
+			if not is_occupied(x, y):
 				continue
-			# Add gravity to v at bottom face of this cell.
-			v[v_idx(x, y + 1)] += GRAVITY * delta
+			var substance_id := markers[idx(x, y)]
+			var sub := SubstanceRegistry.get_substance(substance_id)
+			var g_mult := 1.0
+			if sub:
+				g_mult = sub.gravity_multiplier
+			v[v_idx(x, y + 1)] += BASE_GRAVITY * g_mult * delta
 
 
 func _project() -> void:
@@ -115,7 +153,7 @@ func _project() -> void:
 	for _iter in range(PRESSURE_ITERATIONS):
 		for y in range(height):
 			for x in range(width):
-				if not is_fluid(x, y):
+				if not is_occupied(x, y):
 					continue
 
 				# Count open neighbors (not wall).
@@ -152,13 +190,15 @@ func _project() -> void:
 
 
 func _advect_markers(delta: float) -> void:
-	## Move fluid markers through the velocity field using semi-Lagrangian advection.
+	## Move markers through the velocity field using semi-Lagrangian advection.
+	## This is what produces the "fog swirls through the container" behavior —
+	## markers hop along the divergence-free field curves.
 	var new_markers := PackedInt32Array()
 	new_markers.resize(width * height)
 
 	for y in range(height):
 		for x in range(width):
-			if not is_fluid(x, y):
+			if not is_occupied(x, y):
 				continue
 
 			var substance_id: int = markers[idx(x, y)]
@@ -167,7 +207,7 @@ func _advect_markers(delta: float) -> void:
 			var vx: float = (u[u_idx(x, y)] + u[u_idx(x + 1, y)]) * 0.5
 			var vy: float = (v[v_idx(x, y)] + v[v_idx(x, y + 1)]) * 0.5
 
-			# Target position (where this fluid moves to).
+			# Target position (where this vapor moves to).
 			var tx := int(roundf(float(x) + vx * delta))
 			var ty := int(roundf(float(y) + vy * delta))
 
@@ -182,3 +222,12 @@ func _advect_markers(delta: float) -> void:
 				new_markers[idx(x, y)] = substance_id
 
 	markers = new_markers
+
+
+func _refresh_densities() -> void:
+	## Mirror markers into densities[] so renderers that expect a density
+	## value (liquid_readback-style alpha scaling) have something to read.
+	## All occupied cells get density 1.0 for now. A future improvement:
+	## count neighbors for a smoother gradient.
+	for i in range(markers.size()):
+		densities[i] = 1.0 if markers[i] != 0 else 0.0

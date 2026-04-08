@@ -8,6 +8,7 @@ substance_name = "Flammable Gas"
 phase = 3
 density = 0.001
 viscosity = 0.05
+gravity_multiplier = -0.3
 melting_point = -200.0
 boiling_point = -161.0
 flash_point = 50.0

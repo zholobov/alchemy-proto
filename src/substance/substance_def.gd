@@ -16,6 +16,10 @@ enum Phase { SOLID, POWDER, LIQUID, GAS }
 ## preserves swirl), 0.0 = pure PIC (heavy, dissipative). 0.95 is a standard
 ## lively water; drop toward 0.7-0.85 for sluggish fluids like oil or tar.
 @export_range(0.0, 1.0) var flip_ratio: float = 0.95
+## Gravity direction+magnitude multiplier for VaporSim. 1.0 = normal downward
+## gravity (heavy smoke, liquid). Negative = buoyant/rising (steam, hot air).
+## 0.0 = neutral (gas that just swirls without vertical drift).
+@export_range(-2.0, 2.0) var gravity_multiplier: float = 1.0
 
 @export_group("Thermal")
 @export var melting_point: float = 1000.0  ## Temperature at which solid -> liquid.

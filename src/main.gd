@@ -170,6 +170,10 @@ func _input(event: InputEvent) -> void:
 		elif key == KEY_F8:
 			# Column scenario (mirrors tests/pflip_test.gd:215-224).
 			_scenario_column()
+		elif key == KEY_F9:
+			# Spawn a Steam blob in the middle of the receptacle for vapor
+			# sim debugging. Steam rises (gravity_multiplier < 0).
+			_spawn_debug_vapor()
 
 
 func _process(delta: float) -> void:
@@ -191,6 +195,11 @@ func _process(delta: float) -> void:
 	perf_monitor.begin_timing("Fluid Solver")
 	receptacle.fluid_solver.step(delta)
 	perf_monitor.end_timing("Fluid Solver")
+
+	# --- CPU Vapor grid (fog, mist, steam) ---
+	perf_monitor.begin_timing("Vapor Sim")
+	receptacle.vapor_sim.update(delta)
+	perf_monitor.end_timing("Vapor Sim")
 
 	# Sync all GPU state (particles + fluid) back to CPU for mediator/rendering.
 	receptacle.sync_from_gpu()
@@ -284,6 +293,7 @@ func _on_substance_pouring(substance_id: int, pos: Vector2) -> void:
 func _clear_receptacle() -> void:
 	receptacle.gpu_sim.clear_all()
 	receptacle.fluid_solver.clear()
+	receptacle.vapor_sim.clear_all()
 	receptacle.sync_from_gpu()
 	# Clear rigid bodies.
 	for body in receptacle.rigid_body_mgr._bodies.duplicate():
@@ -333,6 +343,7 @@ func _on_containment_failure() -> void:
 				if randf() < 0.7:
 					grid.clear_cell(x, y)
 	receptacle.liquid_readback.clear()
+	receptacle.vapor_sim.clear_all()
 	pressure_field.reset()
 
 
@@ -394,3 +405,22 @@ func _scenario_column() -> void:
 				positions.append(Vector2(cx + dx + jx, y + jy))
 	receptacle.fluid_solver.spawn_particles_batch(positions, water_id)
 	game_log.log_event("Column scenario (%d particles)" % positions.size(), Color.CYAN)
+
+
+func _spawn_debug_vapor() -> void:
+	## F9 debug: spawn a Steam blob in the middle of the receptacle so the
+	## VaporSim can be visually tested without needing a reaction.
+	var steam_id := SubstanceRegistry.get_id("Steam")
+	if steam_id <= 0:
+		game_log.log_event("No Steam substance registered", Color.RED)
+		return
+	var cx: int = Receptacle.GRID_WIDTH / 2
+	var cy: int = Receptacle.GRID_HEIGHT * 2 / 3
+	var count := 0
+	for dy in range(-4, 5):
+		for dx in range(-4, 5):
+			if dx * dx + dy * dy > 16:
+				continue
+			if receptacle.vapor_sim.spawn(cx + dx, cy + dy, steam_id):
+				count += 1
+	game_log.log_event("Debug vapor spawn: %d cells of Steam" % count, Color.CYAN)

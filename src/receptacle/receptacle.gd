@@ -17,6 +17,9 @@ var grid: ParticleGrid
 ## CPU-side liquid state from the PIC/FLIP solver readback. Populated each
 ## frame by sync_from_gpu(). Read by renderers, fields, and mediator.
 var liquid_readback: LiquidReadback
+## Grid MAC simulator for gases, fog, and steam. Stepped each frame by
+## main._process(). Read by renderers for the vapor overlay.
+var vapor_sim: VaporSim
 var rigid_body_mgr: RigidBodyMgr
 var gpu_sim: GpuSimulation
 var fluid_solver: ParticleFluidSolver
@@ -61,6 +64,11 @@ func _ready() -> void:
 
 	# CPU-side mirror of the liquid solver state, rebuilt each frame.
 	liquid_readback = LiquidReadback.new(GRID_WIDTH, GRID_HEIGHT)
+
+	# CPU grid MAC simulator for vapor/fog/steam. Shares the oval boundary
+	# with the particle grid so gases respect the container walls.
+	vapor_sim = VaporSim.new(GRID_WIDTH, GRID_HEIGHT)
+	vapor_sim.boundary = grid.boundary
 
 	# Create rigid body manager.
 	rigid_body_mgr = RigidBodyMgr.new()
