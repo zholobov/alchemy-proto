@@ -59,6 +59,10 @@ layout(set = 0, binding = 7, std430) restrict buffer Substance {
     int data[];
 } substance;
 
+layout(set = 0, binding = 8, std430) restrict buffer Substance2 {
+    int data[];
+} substance2;
+
 void main() {
     uint pi = gl_GlobalInvocationID.x;
     if (pi >= uint(params.particle_count)) return;
@@ -156,6 +160,13 @@ void main() {
     }
 
     // ---------------- density (particle count) and substance scatter ----------------
+    // Both substance writes are racy (non-atomic). That's fine for a purely
+    // visual mixing hint: substance gets whichever particle wrote last, and
+    // substance2 gets one of the OTHER substance ids that collided with it.
+    // If all particles in the cell share the same id, substance2 stays 0
+    // and the cell renders as a single substance. If two+ different ids
+    // land in the cell, substance2 becomes non-zero and the renderer
+    // blends the two colors — visible mixing at the boundary.
     {
         int cx = int(floor(pos.x));
         int cy = int(floor(pos.y));
@@ -163,6 +174,16 @@ void main() {
         cy = clamp(cy, 0, h - 1);
         uint cell_idx = uint(cy * w + cx);
         atomicAdd(density.data[cell_idx], 1u);
-        substance.data[cell_idx] = p.substance_id;
+
+        int my_id = p.substance_id;
+        int existing = substance.data[cell_idx];
+        if (existing > 0 && existing != my_id) {
+            // The cell already has a different substance — record it as
+            // the secondary so the renderer can blend. Racy write but
+            // cosmetic; if it loses to another thread, that thread will
+            // have recorded a (possibly different) non-zero secondary.
+            substance2.data[cell_idx] = existing;
+        }
+        substance.data[cell_idx] = my_id;
     }
 }

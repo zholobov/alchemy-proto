@@ -73,6 +73,7 @@ var buf_v_temp: RID
 var buf_density_count: RID  # uint, particle count per cell
 var buf_density_float: RID  # float, normalized density (for classify)
 var buf_substance: RID
+var buf_substance2: RID  # C1: secondary substance per cell for mixing visualization
 var buf_substance_props: RID  # per-substance properties (viscosity, ...) indexed by id
 var buf_cell_type: RID
 var buf_divergence: RID
@@ -136,6 +137,7 @@ var groups_part: int
 # CPU readback
 var _density_readback: PackedFloat32Array
 var _substance_readback: PackedInt32Array
+var _substance2_readback: PackedInt32Array  # C1 secondary substance for mixing
 
 
 func setup(w: int, h: int, boundary_mask: PackedByteArray = PackedByteArray()) -> void:
@@ -375,8 +377,8 @@ func cleanup() -> void:
 	# Free buffers
 	for b in [buf_params, buf_particles, buf_boundary, buf_u_vel, buf_v_vel,
 			  buf_u_weights, buf_v_weights, buf_u_old, buf_v_old, buf_u_temp, buf_v_temp,
-			  buf_density_count, buf_density_float, buf_substance, buf_substance_props,
-			  buf_cell_type, buf_divergence, buf_pressure, buf_pressure_out]:
+			  buf_density_count, buf_density_float, buf_substance, buf_substance2,
+			  buf_substance_props, buf_cell_type, buf_divergence, buf_pressure, buf_pressure_out]:
 		if b.is_valid():
 			rd.free_rid(b)
 
@@ -434,6 +436,7 @@ func _create_buffers(boundary_mask: PackedByteArray) -> void:
 	cell_zeros_i.resize(cell_count)
 	buf_density_count = rd.storage_buffer_create(cell_count * 4, cell_zeros_i.to_byte_array())
 	buf_substance = rd.storage_buffer_create(cell_count * 4, cell_zeros_i.to_byte_array())
+	buf_substance2 = rd.storage_buffer_create(cell_count * 4, cell_zeros_i.to_byte_array())
 	buf_cell_type = rd.storage_buffer_create(cell_count * 4, cell_zeros_i.to_byte_array())
 
 	var cell_zeros_f := PackedFloat32Array()
@@ -488,6 +491,7 @@ func _create_pipelines() -> void:
 		[4, buf_v_weights],
 		[5, buf_density_count],
 		[6, buf_substance],
+		[7, buf_substance2],
 	])
 
 	# p2g
@@ -501,6 +505,7 @@ func _create_pipelines() -> void:
 		[5, buf_v_weights],
 		[6, buf_density_count],
 		[7, buf_substance],
+		[8, buf_substance2],
 	])
 
 	# normalize
@@ -673,6 +678,12 @@ func _readback() -> void:
 	_density_readback = d_bytes.to_float32_array()
 	var s_bytes := rd.buffer_get_data(buf_substance)
 	_substance_readback = s_bytes.to_int32_array()
+	var s2_bytes := rd.buffer_get_data(buf_substance2)
+	_substance2_readback = s2_bytes.to_int32_array()
+
+
+func get_secondary_substance_readback() -> PackedInt32Array:
+	return _substance2_readback
 
 
 func debug_first_particle() -> Dictionary:

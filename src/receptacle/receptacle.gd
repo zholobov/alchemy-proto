@@ -179,15 +179,19 @@ func sync_from_gpu() -> void:
 	if fluid_solver:
 		var density := fluid_solver.get_density_readback()
 		var substance := fluid_solver.get_substance_readback()
+		var substance2 := fluid_solver.get_secondary_substance_readback()
 		var markers := liquid_readback.markers
 		var densities := liquid_readback.densities
+		var secondary_markers := liquid_readback.secondary_markers
 		for i in range(mini(density.size(), markers.size())):
 			if density[i] > LIQUID_VISIBLE_THRESHOLD:
 				markers[i] = substance[i] if i < substance.size() else 0
 				densities[i] = density[i]
+				secondary_markers[i] = substance2[i] if i < substance2.size() else 0
 			else:
 				markers[i] = 0
 				densities[i] = 0.0
+				secondary_markers[i] = 0
 
 
 func _exit_tree() -> void:

@@ -36,7 +36,11 @@ layout(set = 0, binding = 5, std430) restrict buffer Density {
 
 layout(set = 0, binding = 6, std430) restrict buffer Substance {
     int data[];
-} substance;  // substance id of last particle in cell (race, but visual only)
+} substance;  // primary substance id in cell (racy, visual only)
+
+layout(set = 0, binding = 7, std430) restrict buffer Substance2 {
+    int data[];
+} substance2;  // secondary substance if cell is mixed (racy, visual only)
 
 void main() {
     int x = int(gl_GlobalInvocationID.x);
@@ -58,5 +62,6 @@ void main() {
     if (x < w && y < h) {
         density.data[y * w + x] = 0u;
         substance.data[y * w + x] = 0;
+        substance2.data[y * w + x] = 0;
     }
 }

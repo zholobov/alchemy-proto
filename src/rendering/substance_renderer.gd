@@ -84,7 +84,10 @@ func render() -> void:
 		# Blend liquid on top if present. Scale liquid alpha by density so thin
 		# cells are translucent and dense cells are opaque. This makes
 		# sparse surface cells fade out gracefully instead of being rendered
-		# as solid color.
+		# as solid color. If the cell holds a second substance (C1), blend
+		# the two substance colors 50/50 before applying density alpha —
+		# this makes water+acid or water+oil interfaces visibly mixed
+		# instead of flickering between the two colors frame-to-frame.
 		if liquid and liquid.markers[i] != 0:
 			var liquid_id: int = liquid.markers[i]
 			var liquid_color: Color
@@ -92,6 +95,11 @@ func render() -> void:
 				liquid_color = _color_cache[liquid_id]
 			else:
 				liquid_color = Color.MAGENTA
+			# Blend in the secondary substance color if this cell is mixed.
+			var secondary_id: int = liquid.secondary_markers[i]
+			if secondary_id > 0 and secondary_id < _color_cache.size():
+				var secondary_color: Color = _color_cache[secondary_id]
+				liquid_color = liquid_color.lerp(secondary_color, 0.5)
 			# Scale by density (clamped 0..1). Use sqrt to make low-density
 			# cells more visible than linear scaling would (sqrt(0.1)=0.32 vs 0.1).
 			var density_factor: float = sqrt(clampf(liquid.densities[i], 0.0, 1.0))

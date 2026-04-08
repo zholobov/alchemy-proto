@@ -24,6 +24,14 @@ var markers: PackedInt32Array
 ## to scale alpha so thin liquid regions fade out instead of popping.
 var densities: PackedFloat32Array
 
+## Secondary substance id per cell for mixing visualization. 0 = cell is
+## homogeneous (all particles share one substance), >0 = cell holds a
+## second substance alongside `markers[i]` and renderers should blend
+## the two colors. Populated by pflip_p2g when a cell sees particles of
+## different substance ids in the same frame. See C1 in the PIC/FLIP
+## work notes for the design tradeoffs.
+var secondary_markers: PackedInt32Array
+
 
 func _init(w: int, h: int) -> void:
 	width = w
@@ -32,6 +40,8 @@ func _init(w: int, h: int) -> void:
 	markers.resize(w * h)
 	densities = PackedFloat32Array()
 	densities.resize(w * h)
+	secondary_markers = PackedInt32Array()
+	secondary_markers.resize(w * h)
 
 
 func idx(x: int, y: int) -> int:
@@ -42,6 +52,7 @@ func clear() -> void:
 	## Zero all per-cell state. Called by main.gd on reset / containment failure.
 	markers.fill(0)
 	densities.fill(0.0)
+	secondary_markers.fill(0)
 
 
 func count_occupied_cells() -> int:
