@@ -254,9 +254,7 @@ func _process(delta: float) -> void:
 	# Inject rigid body cells into grid.cells for cell-based rendering.
 	# Runs AFTER mediator (so reactions see clean grid) and BEFORE
 	# renderer (so bodies are drawn). sync_from_gpu overwrites next frame.
-	receptacle.rigid_body_mgr.inject_render_cells(
-		receptacle.grid, Receptacle.GRID_WIDTH, Receptacle.GRID_HEIGHT,
-		float(Receptacle.CELL_SIZE))
+	receptacle.rigid_body_mgr.inject_render_cells(receptacle.grid)
 
 	# --- Rendering ---
 	perf_monitor.begin_timing("Render")

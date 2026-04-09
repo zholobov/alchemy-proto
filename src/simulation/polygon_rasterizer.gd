@@ -12,12 +12,14 @@ static func rasterize(
 	grid_height: int,
 	cell_size_px: float,
 	out_mask: PackedInt32Array,
+	value: int = 1,
 ) -> void:
 	## Rasterize a polygon into a cell occupancy mask.
 	## polygon_local: vertices in body-local coordinates.
 	## body_pos/body_rotation: transform from local to world space.
 	## out_mask: flat array of size grid_width*grid_height; cells inside the
-	##           polygon are set to 1.
+	##           polygon are set to `value` (default 1). Pass a substance_id
+	##           to store which body occupies each cell.
 	if polygon_local.size() < 3:
 		return
 
@@ -58,7 +60,7 @@ static func rasterize(
 			var px := (cx + 0.5) * cell_size_px
 			var py := (cy + 0.5) * cell_size_px
 			if _point_in_polygon(px, py, world_verts):
-				out_mask[row_offset + cx] = 1
+				out_mask[row_offset + cx] = value
 
 
 static func _point_in_polygon(px: float, py: float, verts: PackedVector2Array) -> bool:
