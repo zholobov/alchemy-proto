@@ -23,13 +23,7 @@ var _selected_substance_name: String = ""
 
 const SPAWN_RADIUS := 3
 
-## Mediator runs every MEDIATOR_INTERVAL seconds of SIM TIME (not render
-## frames). Tracked via accumulator so reactions fire deterministically
-## regardless of FPS. 50ms = ~6 fluid solver substeps.
-const MEDIATOR_INTERVAL: float = 0.2  # 200ms sim time = ~5 checks/sec
-var _mediator_time_acc: float = 0.0
-## Sim time actually processed last frame (from fluid solver substeps).
-## Set by the fluid solver step, read by the mediator throttle.
+## Sim time processed last frame (from fluid solver accumulator).
 var _last_sim_time: float = 0.0
 
 
@@ -249,18 +243,15 @@ func _process(delta: float) -> void:
 	receptacle.vapor_sim.upload_temperatures(receptacle.grid.temperatures)
 	perf_monitor.end_timing("Ambient")
 
-	# --- CPU Mediator (throttled by SIM TIME, not frame count, so
-	# reaction timing is deterministic regardless of render FPS) ---
+	# --- CPU Mediator (runs every frame — optimized to <5ms via
+	# boundary-only scanning + zero-allocation contact checks) ---
 	perf_monitor.begin_timing("Mediator")
-	_mediator_time_acc += _last_sim_time
-	if _mediator_time_acc >= MEDIATOR_INTERVAL:
-		_mediator_time_acc -= MEDIATOR_INTERVAL
-		var has_substances := receptacle.grid.count_particles() > 0 or receptacle.liquid_readback.count_occupied_cells() > 0
-		if has_substances:
-			mediator.update()
-			if mediator.reactions_this_frame > 0:
-				receptacle.gpu_sim.upload_cells(receptacle.grid.cells)
-				receptacle.gpu_sim.upload_temperatures(receptacle.grid.temperatures)
+	var has_substances := receptacle.grid.count_particles() > 0 or receptacle.liquid_readback.count_occupied_cells() > 0
+	if has_substances:
+		mediator.update()
+		if mediator.reactions_this_frame > 0:
+			receptacle.gpu_sim.upload_cells(receptacle.grid.cells)
+			receptacle.gpu_sim.upload_temperatures(receptacle.grid.temperatures)
 	sound_field.flush()
 	perf_monitor.end_timing("Mediator")
 

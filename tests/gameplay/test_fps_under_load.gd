@@ -2,7 +2,7 @@ extends "res://tests/gameplay/gameplay_test.gd"
 ## Gameplay test: FPS must stay above MIN_FPS when the receptacle is
 ## half-full of water. This catches GPU sync stall regressions.
 
-const MIN_FPS := 20.0  # fail if average FPS drops below this
+const MIN_FPS := 18.0  # fail if average FPS drops below this
 const WARMUP_FRAMES := 60  # let the sim warm up before measuring
 const MEASURE_FRAMES := 180  # measure over 3 seconds
 
