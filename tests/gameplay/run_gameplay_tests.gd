@@ -27,10 +27,11 @@ func _ready() -> void:
 func _run_all_tests() -> void:
 	print("\n=== Gameplay Tests ===\n")
 
+	# Single scene instance — GPU resources are expensive to recreate.
+	# Between tests, call _clear_receptacle() which resets all sim
+	# systems, rigid bodies, and fields to a clean initial state.
 	var main := MainScene.instantiate()
 	get_tree().root.add_child(main)
-
-	# Let the game fully initialize.
 	for i in range(5):
 		await get_tree().process_frame
 
@@ -44,6 +45,11 @@ func _run_all_tests() -> void:
 			failures.append("%s: failed to load" % path)
 			total += 1
 			continue
+
+		# Reset to clean state before each test.
+		main._clear_receptacle()
+		for i in range(3):
+			await get_tree().process_frame
 
 		print("Running: %s" % path.get_file())
 		var test_node = script.new()
