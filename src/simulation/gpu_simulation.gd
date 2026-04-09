@@ -237,30 +237,37 @@ func _create_fields_pipeline() -> void:
 
 
 func step(delta: float) -> void:
-	## Run one simulation frame on the GPU.
-	# Dispatch particle update twice — Margolus pass 0 and pass 1
-	for pass_idx in range(2):
-		var bytes := PackedByteArray()
-		bytes.resize(16)
-		bytes.encode_s32(0, width)
-		bytes.encode_s32(4, height)
-		bytes.encode_float(8, delta)
-		bytes.encode_s32(12, _frame_count * 2 + pass_idx)
-		rd.buffer_update(buf_params, 0, 16, bytes)
+	## Run one simulation frame on the GPU. Margolus passes need separate
+	## param updates (pass_idx), but we batch Margolus pass 1 + fields
+	## into one compute list to reduce sync stalls (3→2).
 
-		var compute_list := rd.compute_list_begin()
-		rd.compute_list_bind_compute_pipeline(compute_list, pipeline_particle)
-		rd.compute_list_bind_uniform_set(compute_list, uniform_set_particle, 0)
-		rd.compute_list_dispatch(compute_list, groups_margolus_x, groups_margolus_y, 1)
-		rd.compute_list_end()
-		rd.submit()
-		rd.sync()
+	# Margolus pass 0 (standalone — needs its own params)
+	var bytes := PackedByteArray()
+	bytes.resize(16)
+	bytes.encode_s32(0, width)
+	bytes.encode_s32(4, height)
+	bytes.encode_float(8, delta)
+	bytes.encode_s32(12, _frame_count * 2)
+	rd.buffer_update(buf_params, 0, 16, bytes)
+	var cl := rd.compute_list_begin()
+	rd.compute_list_bind_compute_pipeline(cl, pipeline_particle)
+	rd.compute_list_bind_uniform_set(cl, uniform_set_particle, 0)
+	rd.compute_list_dispatch(cl, groups_margolus_x, groups_margolus_y, 1)
+	rd.compute_list_end()
+	rd.submit()
+	rd.sync()
 
-	# Dispatch fields update (temperature diffusion)
-	var fields_list := rd.compute_list_begin()
-	rd.compute_list_bind_compute_pipeline(fields_list, pipeline_fields)
-	rd.compute_list_bind_uniform_set(fields_list, uniform_set_fields, 0)
-	rd.compute_list_dispatch(fields_list, groups_x, groups_y, 1)
+	# Margolus pass 1 + fields (batched — 2 dispatches, 1 sync)
+	bytes.encode_s32(12, _frame_count * 2 + 1)
+	rd.buffer_update(buf_params, 0, 16, bytes)
+	cl = rd.compute_list_begin()
+	rd.compute_list_bind_compute_pipeline(cl, pipeline_particle)
+	rd.compute_list_bind_uniform_set(cl, uniform_set_particle, 0)
+	rd.compute_list_dispatch(cl, groups_margolus_x, groups_margolus_y, 1)
+	rd.compute_list_add_barrier(cl)
+	rd.compute_list_bind_compute_pipeline(cl, pipeline_fields)
+	rd.compute_list_bind_uniform_set(cl, uniform_set_fields, 0)
+	rd.compute_list_dispatch(cl, groups_x, groups_y, 1)
 	rd.compute_list_end()
 	rd.submit()
 	rd.sync()

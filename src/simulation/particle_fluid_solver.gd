@@ -32,7 +32,7 @@ const MAX_PARTICLES := 262144  # 256k. ~6 MB. Enough to fill 200x150 grid at 8/c
 const PARTICLE_STRIDE := 24  # bytes: vec2 pos + vec2 vel + int substance + int alive
 const MAX_SUBSTANCES := 64   # size of the substance properties table
 const SUBSTANCE_PROPS_STRIDE := 16  # bytes per substance: vec4(viscosity, flip_ratio, density, _)
-const JACOBI_ITERATIONS := 80
+const JACOBI_ITERATIONS := 40
 
 ## Fixed internal sub-step dt. The shader constants in pflip_advect.glsl
 ## (MAX_VELOCITY=100, GRAVITY=60, DRAG_SPEED_FALLOFF=50) and
@@ -44,7 +44,7 @@ const JACOBI_ITERATIONS := 80
 const TARGET_DT := 0.0083   # = 1/120s, matches the "CFL: at 120 FPS" comment in pflip_advect.glsl
 const MAX_FRAME_DT := 0.05  # Hard cap on simulated time per step() call. Below ~20 FPS
                             # we stop trying to keep up with wall time and let the sim slow.
-const MAX_SUBSTEPS := 8     # Safety cap on sub-step count per frame. Prevents death spiral
+const MAX_SUBSTEPS := 3     # Safety cap. Prefer sim slowdown over frame drops.
                             # if substepping itself drops FPS further.
 
 var rd: RenderingDevice
@@ -232,84 +232,93 @@ func _flush_kill_mask() -> void:
 func _single_step(sub_delta: float) -> void:
 	## One full PIC/FLIP pipeline pass at the given dt. Does NOT read back —
 	## the outer step() handles that after all sub-steps finish.
+	##
+	## ALL GPU work for one substep is chained into a SINGLE submit+sync.
+	## Multiple compute_list_begin/end pairs and buffer_copies are queued
+	## sequentially without intermediate syncs — the GPU processes them
+	## in submission order, and we wait once at the end.
+	##
+	## This reduces sync stalls from ~14 per substep (original) to 1,
+	## eliminating the CPU↔GPU ping-pong that made GPU 9% utilized while
+	## CPU busy-waited in rd.sync() at 91%.
 	_update_params(sub_delta)
 
-	# Pass 1: clear grid accumulators
-	_dispatch(pipeline_clear_grid, uset_clear_grid, groups_grid_x, groups_grid_y)
+	# --- Pre-Jacobi: 9 passes ---
+	var cl := rd.compute_list_begin()
+	_cl_dispatch(cl, pipeline_clear_grid, uset_clear_grid, groups_grid_x, groups_grid_y)
+	rd.compute_list_add_barrier(cl)
+	_cl_dispatch(cl, pipeline_p2g, uset_p2g, groups_part, 1)
+	rd.compute_list_add_barrier(cl)
+	_cl_dispatch(cl, pipeline_normalize, uset_normalize, groups_grid_x, groups_grid_y)
+	rd.compute_list_add_barrier(cl)
+	_cl_dispatch(cl, pipeline_classify, uset_classify, groups_grid_x, groups_grid_y)
+	rd.compute_list_add_barrier(cl)
+	_cl_dispatch(cl, pipeline_wall_zero, uset_wall_zero, groups_grid_x, groups_grid_y)
+	rd.compute_list_add_barrier(cl)
+	_cl_dispatch(cl, pipeline_save_vel, uset_save_vel, groups_grid_x, groups_grid_y)
+	rd.compute_list_add_barrier(cl)
+	_cl_dispatch(cl, pipeline_compute_cell_density, uset_compute_cell_density, groups_grid_x, groups_grid_y)
+	rd.compute_list_add_barrier(cl)
+	_cl_dispatch(cl, pipeline_divergence, uset_divergence, groups_grid_x, groups_grid_y)
+	rd.compute_list_add_barrier(cl)
+	_cl_dispatch(cl, pipeline_density_correction, uset_density_correction, groups_grid_x, groups_grid_y)
+	rd.compute_list_end()
+	# NO sync — chain into the Jacobi batch below.
 
-	# Pass 2: particle-to-grid scatter (velocities + density count)
-	_dispatch(pipeline_p2g, uset_p2g, groups_part, 1)
-
-	# Pass 3: normalize accumulated velocities by weights, density count -> float
-	_dispatch(pipeline_normalize, uset_normalize, groups_grid_x, groups_grid_y)
-
-	# Pass 4: classify cells (air / fluid / wall) from density
-	_dispatch(pipeline_classify, uset_classify, groups_grid_x, groups_grid_y)
-
-	# Pass 5: zero wall-adjacent velocities
-	_dispatch(pipeline_wall_zero, uset_wall_zero, groups_grid_x, groups_grid_y)
-
-	# Pass 6: snapshot velocities for FLIP delta (= pressure correction only).
-	# Gravity is NOT applied here — it's applied per-particle in advect.
-	_dispatch(pipeline_save_vel, uset_save_vel, groups_grid_x, groups_grid_y)
-
-	# Pass 6b: compute per-cell density from substance[] for the variable-
-	# density Jacobi + gradient. Runs once per step, reused for all
-	# JACOBI_ITERATIONS of the pressure solve.
-	_dispatch(pipeline_compute_cell_density, uset_compute_cell_density, groups_grid_x, groups_grid_y)
-
-	# Pass 7: compute divergence
-	_dispatch(pipeline_divergence, uset_divergence, groups_grid_x, groups_grid_y)
-
-	# Pass 7b: PIC/FLIP density correction. Adds a negative term to the divergence
-	# at over-packed cells so the pressure solve creates outward force.
-	_dispatch(pipeline_density_correction, uset_density_correction, groups_grid_x, groups_grid_y)
-
-	# Pass 10: Jacobi pressure projection (batched in one compute list)
+	# --- Jacobi pressure projection: JACOBI_ITERATIONS iterations ---
 	rd.buffer_copy(buf_pressure, buf_pressure_out, 0, 0, cell_count * 4)
-	var compute_list := rd.compute_list_begin()
+	cl = rd.compute_list_begin()
 	for i in range(JACOBI_ITERATIONS):
 		if i % 2 == 0:
-			rd.compute_list_bind_compute_pipeline(compute_list, pipeline_jacobi)
-			rd.compute_list_bind_uniform_set(compute_list, uset_jacobi_ab, 0)
+			rd.compute_list_bind_compute_pipeline(cl, pipeline_jacobi)
+			rd.compute_list_bind_uniform_set(cl, uset_jacobi_ab, 0)
 		else:
-			rd.compute_list_bind_compute_pipeline(compute_list, pipeline_jacobi)
-			rd.compute_list_bind_uniform_set(compute_list, uset_jacobi_ba, 0)
-		rd.compute_list_dispatch(compute_list, groups_grid_x, groups_grid_y, 1)
-		rd.compute_list_add_barrier(compute_list)
+			rd.compute_list_bind_compute_pipeline(cl, pipeline_jacobi)
+			rd.compute_list_bind_uniform_set(cl, uset_jacobi_ba, 0)
+		rd.compute_list_dispatch(cl, groups_grid_x, groups_grid_y, 1)
+		rd.compute_list_add_barrier(cl)
 	rd.compute_list_end()
-	rd.submit()
-	rd.sync()
+	# NO sync — chain into post-Jacobi.
+
 	if JACOBI_ITERATIONS % 2 == 1:
 		rd.buffer_copy(buf_pressure_out, buf_pressure, 0, 0, cell_count * 4)
 
-	# Pass 11: apply pressure gradient to velocities
-	_dispatch(pipeline_gradient, uset_gradient, groups_grid_x, groups_grid_y)
-
-	# Pass 11b: extrapolate fluid velocities into adjacent air cells. Each pass
-	# extends the valid velocity field by 1 cell. This gives particles near the
-	# fluid surface valid grid velocities to gather from in g2p, smoothing out
-	# the boundary discontinuity. Run twice for a 2-cell extrapolation layer.
-	for i in range(2):
-		_dispatch(pipeline_extrapolate, uset_extrapolate, groups_grid_x, groups_grid_y)
-		rd.buffer_copy(buf_u_temp, buf_u_vel, 0, 0, u_size * 4)
-		rd.buffer_copy(buf_v_temp, buf_v_vel, 0, 0, v_size * 4)
-
-	# Pass 11c: per-substance viscosity. Reads u_vel/v_vel, writes u_temp/v_temp,
-	# then we copy temp back. Runs after gradient and extrapolation so the
-	# viscosity correction is part of the (current - saved) FLIP delta.
-	_dispatch(pipeline_viscosity, uset_viscosity, groups_grid_x, groups_grid_y)
+	# --- Post-Jacobi: gradient + extrapolate×2 + viscosity + finish ---
+	# Gradient + first extrapolate
+	cl = rd.compute_list_begin()
+	_cl_dispatch(cl, pipeline_gradient, uset_gradient, groups_grid_x, groups_grid_y)
+	rd.compute_list_add_barrier(cl)
+	_cl_dispatch(cl, pipeline_extrapolate, uset_extrapolate, groups_grid_x, groups_grid_y)
+	rd.compute_list_end()
 	rd.buffer_copy(buf_u_temp, buf_u_vel, 0, 0, u_size * 4)
 	rd.buffer_copy(buf_v_temp, buf_v_vel, 0, 0, v_size * 4)
 
-	# Pass 12: zero wall velocities (post-gradient + post-viscosity)
-	_dispatch(pipeline_wall_zero, uset_wall_zero, groups_grid_x, groups_grid_y)
+	# Second extrapolate
+	cl = rd.compute_list_begin()
+	_cl_dispatch(cl, pipeline_extrapolate, uset_extrapolate, groups_grid_x, groups_grid_y)
+	rd.compute_list_end()
+	rd.buffer_copy(buf_u_temp, buf_u_vel, 0, 0, u_size * 4)
+	rd.buffer_copy(buf_v_temp, buf_v_vel, 0, 0, v_size * 4)
 
-	# Pass 13: gather corrected grid velocities back to particles (FLIP)
-	_dispatch(pipeline_g2p, uset_g2p, groups_part, 1)
+	# Viscosity
+	cl = rd.compute_list_begin()
+	_cl_dispatch(cl, pipeline_viscosity, uset_viscosity, groups_grid_x, groups_grid_y)
+	rd.compute_list_end()
+	rd.buffer_copy(buf_u_temp, buf_u_vel, 0, 0, u_size * 4)
+	rd.buffer_copy(buf_v_temp, buf_v_vel, 0, 0, v_size * 4)
 
-	# Pass 14: move particles + boundary collision
-	_dispatch(pipeline_advect, uset_advect, groups_part, 1)
+	# Final passes: wall_zero + g2p + advect
+	cl = rd.compute_list_begin()
+	_cl_dispatch(cl, pipeline_wall_zero, uset_wall_zero, groups_grid_x, groups_grid_y)
+	rd.compute_list_add_barrier(cl)
+	_cl_dispatch(cl, pipeline_g2p, uset_g2p, groups_part, 1)
+	rd.compute_list_add_barrier(cl)
+	_cl_dispatch(cl, pipeline_advect, uset_advect, groups_part, 1)
+	rd.compute_list_end()
+
+	# ONE sync for the entire substep.
+	rd.submit()
+	rd.sync()
 
 
 func spawn_particle(pos_x: float, pos_y: float, substance_id: int = 1) -> bool:
@@ -819,11 +828,18 @@ func _update_params(delta: float) -> void:
 	rd.buffer_update(buf_params, 0, 16, bytes)
 
 
+func _cl_dispatch(cl: int, pipeline: RID, uniform_set: RID, gx: int, gy: int) -> void:
+	## Append a dispatch to an existing compute list (no submit/sync).
+	rd.compute_list_bind_compute_pipeline(cl, pipeline)
+	rd.compute_list_bind_uniform_set(cl, uniform_set, 0)
+	rd.compute_list_dispatch(cl, gx, gy, 1)
+
+
 func _dispatch(pipeline: RID, uniform_set: RID, gx: int, gy: int) -> void:
+	## Standalone dispatch with its own submit+sync. Only used for passes
+	## that need buffer copies between them (extrapolate, viscosity).
 	var compute_list := rd.compute_list_begin()
-	rd.compute_list_bind_compute_pipeline(compute_list, pipeline)
-	rd.compute_list_bind_uniform_set(compute_list, uniform_set, 0)
-	rd.compute_list_dispatch(compute_list, gx, gy, 1)
+	_cl_dispatch(compute_list, pipeline, uniform_set, gx, gy)
 	rd.compute_list_end()
 	rd.submit()
 	rd.sync()

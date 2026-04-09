@@ -128,60 +128,55 @@ func update(delta: float) -> void:
 	delta = clampf(delta, 0.0, 0.033)
 	_update_params(delta)
 
-	# Pass 1: Classify cells
-	_dispatch(pipeline_classify, uniform_set_classify)
+	# ALL vapor sim GPU work chained into ONE submit+sync.
+	# Pre-Jacobi: classify + body_forces + wall_zero + divergence
+	var cl := rd.compute_list_begin()
+	_cl_dispatch(cl, pipeline_classify, uniform_set_classify)
+	rd.compute_list_add_barrier(cl)
+	_cl_dispatch(cl, pipeline_body_forces, uniform_set_body_forces)
+	rd.compute_list_add_barrier(cl)
+	_cl_dispatch(cl, pipeline_wall_zero, uniform_set_wall_zero)
+	rd.compute_list_add_barrier(cl)
+	_cl_dispatch(cl, pipeline_divergence, uniform_set_divergence)
+	rd.compute_list_end()
 
-	# Pass 2: Apply gravity
-	_dispatch(pipeline_body_forces, uniform_set_body_forces)
-
-	# Zero wall-adjacent velocities BEFORE divergence. Otherwise gravity-added
-	# velocities at wall faces make divergence appear balanced when physically
-	# fluid can't flow through walls, preventing pressure buildup.
-	_dispatch(pipeline_wall_zero, uniform_set_wall_zero)
-
-	# Pass 3: Compute divergence
-	_dispatch(pipeline_divergence, uniform_set_divergence)
-
-	# Warm start Jacobi: copy previous frame's pressure into pressure_out so
-	# ping-pong starts from the previous converged state. GPU copy (no CPU roundtrip).
+	# Jacobi
 	rd.buffer_copy(buf_pressure, buf_pressure_out, 0, 0, cell_count * 4)
-
-	# Pass 4: Jacobi pressure iterations batched into a single compute list.
-	# ~200 dispatches in one submit replaces ~200 separate submit+sync cycles,
-	# which is the main performance bottleneck of the solver.
-	var compute_list := rd.compute_list_begin()
+	cl = rd.compute_list_begin()
 	for i in range(JACOBI_ITERATIONS):
 		if i % 2 == 0:
-			rd.compute_list_bind_compute_pipeline(compute_list, pipeline_jacobi)
-			rd.compute_list_bind_uniform_set(compute_list, uniform_set_jacobi_ab, 0)
+			rd.compute_list_bind_compute_pipeline(cl, pipeline_jacobi)
+			rd.compute_list_bind_uniform_set(cl, uniform_set_jacobi_ab, 0)
 		else:
-			rd.compute_list_bind_compute_pipeline(compute_list, pipeline_jacobi)
-			rd.compute_list_bind_uniform_set(compute_list, uniform_set_jacobi_ba, 0)
-		rd.compute_list_dispatch(compute_list, groups_x, groups_y, 1)
-		rd.compute_list_add_barrier(compute_list)
+			rd.compute_list_bind_compute_pipeline(cl, pipeline_jacobi)
+			rd.compute_list_bind_uniform_set(cl, uniform_set_jacobi_ba, 0)
+		rd.compute_list_dispatch(cl, groups_x, groups_y, 1)
+		rd.compute_list_add_barrier(cl)
 	rd.compute_list_end()
-	rd.submit()
-	rd.sync()
-
-	# Ensure final pressure is in buf_pressure (gradient reads from there).
 	if JACOBI_ITERATIONS % 2 == 1:
 		rd.buffer_copy(buf_pressure_out, buf_pressure, 0, 0, cell_count * 4)
 
-	# Pass 5: Subtract pressure gradient from velocities.
-	_dispatch(pipeline_gradient, uniform_set_gradient)
+	# Post-Jacobi: gradient + wall_zero + advect
+	cl = rd.compute_list_begin()
+	_cl_dispatch(cl, pipeline_gradient, uniform_set_gradient)
+	rd.compute_list_add_barrier(cl)
+	_cl_dispatch(cl, pipeline_wall_zero, uniform_set_wall_zero)
+	rd.compute_list_add_barrier(cl)
+	_cl_dispatch(cl, pipeline_advect, uniform_set_advect)
+	rd.compute_list_end()
 
-	# Pass 6: Zero wall velocities.
-	_dispatch(pipeline_wall_zero, uniform_set_wall_zero)
-
-	# Pass 7: Advect density and substance.
-	_dispatch(pipeline_advect, uniform_set_advect)
-
-	# Swap density/substance: copy _out → in for next frame (GPU copy).
+	# Swap density/substance
 	rd.buffer_copy(buf_density_out, buf_density, 0, 0, cell_count * 4)
 	rd.buffer_copy(buf_substance_out, buf_substance, 0, 0, cell_count * 4)
 
-	# Pass 8: Velocity damping.
-	_dispatch(pipeline_damping, uniform_set_damping)
+	# Damping
+	cl = rd.compute_list_begin()
+	_cl_dispatch(cl, pipeline_damping, uniform_set_damping)
+	rd.compute_list_end()
+
+	# ONE sync for entire vapor update.
+	rd.submit()
+	rd.sync()
 
 	_readback_density()
 
@@ -598,6 +593,13 @@ func _update_params(delta: float, extra: int = 0) -> void:
 	bytes.encode_float(8, delta)
 	bytes.encode_s32(12, extra)
 	rd.buffer_update(buf_params, 0, 16, bytes)
+
+
+func _cl_dispatch(cl: int, pipeline: RID, uniform_set: RID) -> void:
+	## Append a dispatch to an existing compute list (no submit/sync).
+	rd.compute_list_bind_compute_pipeline(cl, pipeline)
+	rd.compute_list_bind_uniform_set(cl, uniform_set, 0)
+	rd.compute_list_dispatch(cl, groups_x, groups_y, 1)
 
 
 func _dispatch(pipeline: RID, uniform_set: RID) -> void:

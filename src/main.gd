@@ -215,9 +215,12 @@ func _process(delta: float) -> void:
 	perf_monitor.end_timing("Vapor Sim")
 
 	# Sync all GPU state (particles + fluid) back to CPU for mediator/rendering.
+	perf_monitor.begin_timing("Sync")
 	receptacle.sync_from_gpu()
+	perf_monitor.end_timing("Sync")
 
 	# --- Rigid-body buoyancy (Archimedes force from displaced liquid) ---
+	perf_monitor.begin_timing("Buoyancy")
 	receptacle.rigid_body_mgr.apply_liquid_forces(
 		receptacle.fluid_solver,
 		receptacle.liquid_readback,
@@ -226,34 +229,30 @@ func _process(delta: float) -> void:
 		Receptacle.GRID_HEIGHT,
 		float(Receptacle.CELL_SIZE),
 	)
+	perf_monitor.end_timing("Buoyancy")
 
-	# Compute the shared ambient density field and push it to both solvers.
-	# Used on the NEXT frame's step() for per-cell Archimedes buoyancy
-	# (inter-liquid, inter-gas, and gas-liquid cross-phase). 1-frame lag
-	# is acceptable for visual fluid behavior.
+	perf_monitor.begin_timing("Ambient")
 	receptacle.compute_ambient_density()
 	receptacle.fluid_solver.upload_ambient_density(receptacle.ambient_density)
 	receptacle.vapor_sim.upload_ambient_density(receptacle.ambient_density)
-
-	# Upload temperatures for thermal buoyancy (convection). Same 1-frame lag.
 	receptacle.fluid_solver.upload_temperatures(receptacle.grid.temperatures)
 	receptacle.vapor_sim.upload_temperatures(receptacle.grid.temperatures)
+	perf_monitor.end_timing("Ambient")
 
-	# --- CPU Mediator (sparse reactions only, fields run on GPU) ---
+	# --- CPU Mediator (run every N frames — reactions are slow chemical
+	# processes, 6 checks/sec is plenty. This is THE main CPU bottleneck:
+	# 79ms scanning 30K cells for reactions in a pure water pool.) ---
 	perf_monitor.begin_timing("Mediator")
-	var has_substances := receptacle.grid.count_particles() > 0 or receptacle.liquid_readback.count_occupied_cells() > 0
-	if has_substances:
-		mediator.update()
-		# Push reaction changes back to GPU
-		if mediator.reactions_this_frame > 0:
-			receptacle.gpu_sim.upload_cells(receptacle.grid.cells)
-			receptacle.gpu_sim.upload_temperatures(receptacle.grid.temperatures)
+	if Engine.get_process_frames() % 5 == 0:
+		var has_substances := receptacle.grid.count_particles() > 0 or receptacle.liquid_readback.count_occupied_cells() > 0
+		if has_substances:
+			mediator.update()
+			if mediator.reactions_this_frame > 0:
+				receptacle.gpu_sim.upload_cells(receptacle.grid.cells)
+				receptacle.gpu_sim.upload_temperatures(receptacle.grid.temperatures)
 	sound_field.flush()
 	perf_monitor.end_timing("Mediator")
 
-	# Inject rigid body cells into grid.cells for cell-based rendering.
-	# Runs AFTER mediator (so reactions see clean grid) and BEFORE
-	# renderer (so bodies are drawn). sync_from_gpu overwrites next frame.
 	receptacle.rigid_body_mgr.inject_render_cells(receptacle.grid, receptacle.liquid_readback)
 
 	# --- Rendering ---

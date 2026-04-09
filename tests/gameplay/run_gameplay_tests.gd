@@ -17,6 +17,8 @@ const TEST_SCRIPTS: Array[String] = [
 	"res://tests/gameplay/test_buoyancy.gd",
 	"res://tests/gameplay/test_ice_floats.gd",
 	"res://tests/gameplay/test_manual_pour_buoyancy.gd",
+	"res://tests/gameplay/test_fps_under_load.gd",
+	"res://tests/gameplay/test_profiling.gd",
 ]
 
 
