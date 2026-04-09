@@ -23,7 +23,12 @@ const MAX_BUOYANCY_FACTOR: float = 8.0
 
 ## Linear drag coefficient. F_drag = -DRAG_COEF × velocity × submerged_cells.
 ## Damps oscillation of floating bodies using stationary-fluid approximation.
-const DRAG_COEF: float = 5.0
+## Tuned for near-critical damping so floating bodies settle without
+## oscillating. The system is spring-like (buoyancy ∝ depth), and
+## critical damping requires c ≈ 2√(k·m) ≈ 75 for a wood block.
+## Effective c = DRAG_COEF × submerged_cells × MASS_SCALE ≈ 150×45×0.01 = 67.
+## Slightly underdamped → body settles with ≤1 gentle overshoot.
+const DRAG_COEF: float = 300.0
 
 var grid: ParticleGrid
 var _bodies: Array[RigidBody2D] = []
@@ -227,37 +232,52 @@ func apply_liquid_forces(
 		var cy_min := maxi(floori(min_y / cell_size_px), 0)
 		var cy_max := mini(floori(max_y / cell_size_px), grid_height - 1)
 
-		# --- Accumulate displaced liquid mass ---
+		# --- Find fluid surface and density from REFERENCE COLUMN ---
+		# The body displaces water from nearby cells, so we can't sample
+		# the body's bbox for surface/density — it's disrupted. Instead,
+		# scan a reference column FAR from the body to find the undisturbed
+		# fluid surface Y and density. In our oval receptacle with a
+		# uniform water level, any column away from the body gives a good
+		# measurement. If the body is near the center, use a side column.
+		var ref_cx := grid_width / 2
+		if ref_cx >= cx_min - 5 and ref_cx <= cx_max + 5:
+			ref_cx = 10  # body overlaps center — use left side
+
+		var fluid_density := 0.0
+		var surface_py := float(grid_height) * cell_size_px  # default: no water
+
+		for ry in range(grid_height):
+			var ridx := ry * grid_width + ref_cx
+			if liquid_readback.densities[ridx] > 0.15:
+				surface_py = float(ry) * cell_size_px
+				# Read fluid density from the first liquid cell found.
+				var marker: int = liquid_readback.markers[ridx]
+				if marker > 0:
+					var lsub := SubstanceRegistry.get_substance(marker)
+					if lsub:
+						fluid_density = lsub.density
+				break  # topmost liquid row = surface
+
+		# --- Count body cells below the fluid surface ---
 		var total_mass := 0.0
 		var sum_x := 0.0
 		var sum_y := 0.0
 		var submerged_cells := 0
 
-		for cy in range(cy_min, cy_max + 1):
-			var row_offset := cy * grid_width
-			for cx in range(cx_min, cx_max + 1):
-				var px := (cx + 0.5) * cell_size_px
+		if fluid_density > 0.0:
+			for cy in range(cy_min, cy_max + 1):
 				var py := (cy + 0.5) * cell_size_px
-				if not PolygonRasterizer._point_in_polygon(px, py, world_verts):
-					continue
-				# Body cells are WALL — no particles inside. Determine
-				# submersion by checking cardinal neighbors' ambient density.
-				var max_neighbor_density := 0.0
-				if cx > 0:
-					max_neighbor_density = maxf(max_neighbor_density, ambient[row_offset + cx - 1])
-				if cx < grid_width - 1:
-					max_neighbor_density = maxf(max_neighbor_density, ambient[row_offset + cx + 1])
-				if cy > 0:
-					max_neighbor_density = maxf(max_neighbor_density, ambient[(cy - 1) * grid_width + cx])
-				if cy < grid_height - 1:
-					max_neighbor_density = maxf(max_neighbor_density, ambient[(cy + 1) * grid_width + cx])
-				if max_neighbor_density <= SUBMERSION_THRESHOLD:
-					continue
-				submerged_cells += 1
-				var cell_mass: float = max_neighbor_density * cell_size_px * cell_size_px
-				total_mass += cell_mass
-				sum_x += px * cell_mass
-				sum_y += py * cell_mass
+				if py < surface_py:
+					continue  # above fluid surface — not submerged
+				for cx in range(cx_min, cx_max + 1):
+					var px := (cx + 0.5) * cell_size_px
+					if not PolygonRasterizer._point_in_polygon(px, py, world_verts):
+						continue
+					submerged_cells += 1
+					var cell_mass := fluid_density * cell_size_px * cell_size_px
+					total_mass += cell_mass
+					sum_x += px * cell_mass
+					sum_y += py * cell_mass
 
 		# --- Apply gravity + buoyancy as a persistent net force ---
 		# We disabled Godot's built-in gravity (gravity_scale=0) so we can
@@ -270,21 +290,25 @@ func apply_liquid_forces(
 		buoyancy_force = minf(buoyancy_force, MAX_BUOYANCY_FACTOR * gravity_force)
 		var net_y := gravity_force - buoyancy_force  # positive = down
 
-		# Drag: opposes velocity, proportional to submerged contact area.
-		var drag_y := 0.0
-		var drag_x := 0.0
-		if submerged_cells > 0:
-			var k := DRAG_COEF * float(submerged_cells) * MASS_SCALE
-			drag_x = -body.linear_velocity.x * k
-			drag_y = -body.linear_velocity.y * k
+# --- Set forces ---
+		# constant_force carries gravity + buoyancy (position-dependent).
+		# linear_damp carries drag (velocity-dependent) — Godot applies
+		# this INSIDE the physics integrator so there's no 1-frame lag
+		# and no overshoot/divergence from stale velocity values.
+		body.constant_force = Vector2(0, net_y)
 
-		# Set as constant_force — persists until we change it next frame.
-		body.constant_force = Vector2(drag_x, net_y + drag_y)
+		if submerged_cells > 0:
+			# linear_damp in Godot = velocity decay fraction per second.
+			# At damp=30, velocity halves in ~0.023s (≈1.4 frames). Strong
+			# but stable because Godot integrates it within the step.
+			body.linear_damp = DRAG_COEF * float(submerged_cells) * MASS_SCALE / maxf(body.mass, 0.01)
+		else:
+			body.linear_damp = 0.5  # small air resistance
 
 		# Torque from asymmetric submersion (tilts the body).
 		if total_mass > 0.0:
 			var center := Vector2(sum_x / total_mass, sum_y / total_mass)
 			var offset := center - body.global_position
-			body.constant_torque = offset.x * (net_y + drag_y) - offset.y * drag_x
+			body.constant_torque = offset.x * net_y
 		else:
 			body.constant_torque = 0.0

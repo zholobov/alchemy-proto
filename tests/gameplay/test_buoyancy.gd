@@ -24,21 +24,60 @@ func run() -> Array[Dictionary]:
 	var bottom_y := receptacle_bottom_y()
 	print("  Water surface ≈ %.0f, bottom ≈ %.0f" % [surface_y, bottom_y])
 
-	# ---- Step 2: Drop wood ----
+	# ---- Step 2: Drop wood with per-frame tracking ----
 	print("  Dropping wood...")
-	var wood_drop_pos := Vector2(center.x - 40, _receptacle.global_position.y + 30 * Receptacle.CELL_SIZE)  # well above water
+	var wood_drop_pos := Vector2(center.x - 40, _receptacle.global_position.y + 30 * Receptacle.CELL_SIZE)
 	await drop_solid("Wood", wood_drop_pos)
-	await wait_frames(180)  # 3 seconds to settle
 
 	var bodies := get_rigid_bodies()
 	if bodies.size() < 1:
 		assert_test("wood_spawned", false, "no rigid body found after drop")
 		return _results
-
 	var wood := bodies[bodies.size() - 1]
+
+	# Track wood position every frame to detect oscillation.
+	var y_history: Array[float] = []
+	var vel_history: Array[float] = []
+	var force_history: Array[float] = []
+	print("  Tracking wood for 300 frames...")
+	for i in range(300):
+		await get_tree().process_frame
+		y_history.append(wood.global_position.y)
+		vel_history.append(wood.linear_velocity.y)
+		force_history.append(wood.constant_force.y)
+
+	# Print trajectory summary (every 10 frames).
+	print("  Frame | Y pos | vel_y  | force_y")
+	for i in range(0, y_history.size(), 10):
+		print("  %5d | %5.0f | %6.1f | %7.0f" % [i, y_history[i], vel_history[i], force_history[i]])
+
+	# Detect LARGE oscillation — small jitter from fluid interaction is
+	# normal and physically realistic. We care about:
+	# (a) Y-range in the final second: body should have settled
+	# (b) no sign changes where velocity is large on both sides (big swings)
+	var last_60_min := INF
+	var last_60_max := -INF
+	for i in range(maxi(0, y_history.size() - 60), y_history.size()):
+		last_60_min = minf(last_60_min, y_history[i])
+		last_60_max = maxf(last_60_max, y_history[i])
+	var y_range := last_60_max - last_60_min
+
+	var big_swings := 0
+	for i in range(1, vel_history.size()):
+		if vel_history[i] * vel_history[i - 1] < 0:
+			if absf(vel_history[i]) > 30.0 and absf(vel_history[i - 1]) > 30.0:
+				big_swings += 1
+
+	print("  Final 60-frame Y range: %.0f px, big velocity swings: %d" % [y_range, big_swings])
+	assert_test("wood_settled",
+		y_range < 60.0,
+		"Y range in final second: %.0f px — expected < 60 (body still swinging)" % y_range)
+	assert_test("wood_no_big_swings",
+		big_swings <= 2,
+		"%d big velocity reversals (|v|>30 on both sides) — body is bouncing" % big_swings)
+
+	# Final position checks.
 	var wood_y := wood.global_position.y
-	# Wood (density 0.65) should float: its center should be ABOVE the
-	# bottom of the receptacle and NEAR the water surface (not on the floor).
 	var wood_above_floor := wood_y < bottom_y - 20
 	assert_test("wood_floats_above_floor",
 		wood_above_floor,
