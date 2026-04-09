@@ -18,6 +18,10 @@ const BUOYANCY_G: float = 60.0
 ## weight. Prevents numerical blow-up when a body overlaps many dense cells.
 const MAX_BUOYANCY_FACTOR: float = 8.0
 
+## Linear drag coefficient. F_drag = -DRAG_COEF × velocity × submerged_cells.
+## Damps oscillation of floating bodies using stationary-fluid approximation.
+const DRAG_COEF: float = 5.0
+
 var grid: ParticleGrid
 var _bodies: Array[RigidBody2D] = []
 
@@ -216,6 +220,7 @@ func apply_liquid_forces(
 		var total_mass := 0.0
 		var sum_x := 0.0
 		var sum_y := 0.0
+		var submerged_cells := 0
 
 		for cy in range(cy_min, cy_max + 1):
 			var row_offset := cy * grid_width
@@ -229,6 +234,7 @@ func apply_liquid_forces(
 				var marker: int = liquid_readback.markers[idx]
 				if fill_fraction <= 0.0 or marker <= 0:
 					continue
+				submerged_cells += 1
 				var liquid_sub := SubstanceRegistry.get_substance(marker)
 				if not liquid_sub:
 					continue
@@ -245,3 +251,8 @@ func apply_liquid_forces(
 			var max_force: float = MAX_BUOYANCY_FACTOR * body.mass * BUOYANCY_G
 			force_mag = minf(force_mag, max_force)
 			body.apply_force(Vector2(0, -force_mag), center - body.position)
+
+		# --- Apply linear drag force to damp oscillation ---
+		if submerged_cells > 0:
+			var drag_force := -body.linear_velocity * DRAG_COEF * float(submerged_cells) * MASS_SCALE
+			body.apply_central_force(drag_force)
