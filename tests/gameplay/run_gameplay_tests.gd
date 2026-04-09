@@ -11,7 +11,10 @@ extends Node
 const MainScene := preload("res://src/main.tscn")
 
 const TEST_SCRIPTS: Array[String] = [
+	"res://tests/gameplay/test_rigid_body_basics.gd",
+	"res://tests/gameplay/test_water_basics.gd",
 	"res://tests/gameplay/test_buoyancy.gd",
+	"res://tests/gameplay/test_ice_floats.gd",
 ]
 
 
