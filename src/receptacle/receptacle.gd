@@ -220,12 +220,20 @@ func sync_from_gpu() -> void:
 func compute_ambient_density() -> void:
 	## Walk every cell and compute the ambient density from the heaviest phase
 	## present: liquid first (via liquid_readback.markers), then vapor (via
-	## vapor_sim.markers), falling back to AIR_DENSITY. Apply thermal
-	## modulation so hot cells show up as lower ambient density — required
-	## for the shader's phase-interface detection to trigger on temperature
-	## differences within the same substance (convection). The resulting
-	## field is uploaded to both solvers so their body forces can do
-	## Archimedes buoyancy against the "other phase around me".
+	## vapor_sim.markers), falling back to AIR_DENSITY. Uses SUBSTANCE density
+	## directly — no per-cell fill weighting. Reason: the shader's phase-
+	## interface detection uses a ±5% relative threshold, and natural particle
+	## fill variation inside a homogeneous pool (cells with 6 vs 8 particles,
+	## fills of 0.75 vs 1.0) creates ambient density differences large enough
+	## to falsely trip the threshold, making water floats-on-water and behave
+	## sluggishly. Treating a water cell as "water density = 1.0" regardless
+	## of fill eliminates the false positive: all water cells look the same
+	## to the phase-interface check.
+	##
+	## Thermal modulation still applies: hot cells show up as lower ambient
+	## density so convection within a single substance works. This matches
+	## the in-shader thermal scaling exactly so self and ambient are
+	## compared on the same basis.
 	##
 	## Sampled from LAST frame's readback (sync_from_gpu ran before this),
 	## so there's a 1-frame lag between state change and buoyancy response.
@@ -233,27 +241,21 @@ func compute_ambient_density() -> void:
 	var cell_count: int = GRID_WIDTH * GRID_HEIGHT
 	var liquid_markers: PackedInt32Array = liquid_readback.markers if liquid_readback else PackedInt32Array()
 	var vapor_markers: PackedInt32Array = vapor_sim.markers if vapor_sim else PackedInt32Array()
-	var liquid_densities: PackedFloat32Array = liquid_readback.densities if liquid_readback else PackedFloat32Array()
 	var temperatures: PackedFloat32Array = grid.temperatures
 
 	for i in range(cell_count):
 		var max_density := AIR_DENSITY
 
-		# Liquid contribution, weighted by the normalized density readback so
-		# a sparse liquid cell doesn't pretend to be a full water column.
+		# Liquid contribution: substance density as-is, NOT weighted by fill.
+		# A cell with water in it has water density, period.
 		if i < liquid_markers.size():
 			var lid: int = liquid_markers[i]
 			if lid > 0:
 				var sub := SubstanceRegistry.get_substance(lid)
-				if sub:
-					var fill: float = clampf(liquid_densities[i] if i < liquid_densities.size() else 1.0, 0.0, 1.0)
-					var lrho := sub.density * fill + AIR_DENSITY * (1.0 - fill)
-					if lrho > max_density:
-						max_density = lrho
+				if sub and sub.density > max_density:
+					max_density = sub.density
 
-		# Vapor contribution. VaporSim uses integer markers (no fractional
-		# density field), so a cell with any vapor is treated as having that
-		# substance's full density.
+		# Vapor contribution.
 		if i < vapor_markers.size():
 			var vid: int = vapor_markers[i]
 			if vid > 0:
