@@ -376,6 +376,7 @@ gd-alchemy-proto/
 ### Performance Budgets
 - **Desktop:** 60 FPS target
 - **Web export:** 30 FPS acceptable
+- **Mobile minimum supported device:** **Realme C85 Pro** (Qualcomm Snapdragon 685 / Adreno 610, Vulkan 1.1, LPDDR4X). 30 FPS target, expected to require lowered settings (smaller grid, fewer Jacobi iterations, reduced particle cap). Anything below this tier is out of scope — devices with only OpenGL ES 3.1 or GPUs without uint-atomic storage buffers will not be supported.
 - **Particle grid:** 256x256 cells (65K), benchmark down to 128x128 if needed
 - **Fluid sim:** same grid, can run at half resolution with upscaling if needed
 - **Rigid bodies:** up to 10 simultaneous
