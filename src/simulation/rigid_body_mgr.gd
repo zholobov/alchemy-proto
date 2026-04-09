@@ -65,7 +65,11 @@ func spawn_object(substance_id: int, screen_pos: Vector2) -> void:
 
 	var body := RigidBody2D.new()
 	body.mass = _polygon_area(verts) * substance.density * MASS_SCALE
-	body.gravity_scale = 1.0
+	# Disable Godot's built-in gravity. We apply gravity manually in
+	# apply_liquid_forces() together with buoyancy, so both forces use
+	# the same code path and timing — avoids the _process vs
+	# _physics_process phase mismatch that made buoyancy ineffective.
+	body.gravity_scale = 0.0
 	body.position = screen_pos - receptacle_position
 
 	var collision := CollisionPolygon2D.new()
@@ -255,16 +259,32 @@ func apply_liquid_forces(
 				sum_x += px * cell_mass
 				sum_y += py * cell_mass
 
-		# --- Apply upward buoyancy force at center of buoyant mass ---
+		# --- Apply gravity + buoyancy as a persistent net force ---
+		# We disabled Godot's built-in gravity (gravity_scale=0) so we can
+		# combine gravity and buoyancy in the same code path. Using
+		# constant_force (persistent) instead of apply_force (instantaneous)
+		# because apply_force from _process() gets cleared before the next
+		# _physics_process() can consume it.
+		var gravity_force := body.mass * BUOYANCY_G  # weight, downward
+		var buoyancy_force := total_mass * BUOYANCY_G * MASS_SCALE  # upward
+		buoyancy_force = minf(buoyancy_force, MAX_BUOYANCY_FACTOR * gravity_force)
+		var net_y := gravity_force - buoyancy_force  # positive = down
+
+		# Drag: opposes velocity, proportional to submerged contact area.
+		var drag_y := 0.0
+		var drag_x := 0.0
+		if submerged_cells > 0:
+			var k := DRAG_COEF * float(submerged_cells) * MASS_SCALE
+			drag_x = -body.linear_velocity.x * k
+			drag_y = -body.linear_velocity.y * k
+
+		# Set as constant_force — persists until we change it next frame.
+		body.constant_force = Vector2(drag_x, net_y + drag_y)
+
+		# Torque from asymmetric submersion (tilts the body).
 		if total_mass > 0.0:
 			var center := Vector2(sum_x / total_mass, sum_y / total_mass)
-			var force_mag: float = total_mass * BUOYANCY_G * MASS_SCALE
-			# Safety clamp to prevent blow-up.
-			var max_force: float = MAX_BUOYANCY_FACTOR * body.mass * BUOYANCY_G
-			force_mag = minf(force_mag, max_force)
-			body.apply_force(Vector2(0, -force_mag), center - body.position)
-
-		# --- Apply linear drag force to damp oscillation ---
-		if submerged_cells > 0:
-			var drag_force := -body.linear_velocity * DRAG_COEF * float(submerged_cells) * MASS_SCALE
-			body.apply_central_force(drag_force)
+			var offset := center - body.global_position
+			body.constant_torque = offset.x * (net_y + drag_y) - offset.y * drag_x
+		else:
+			body.constant_torque = 0.0
