@@ -112,33 +112,17 @@ void main() {
 
     if (face_sub <= 0) return;
 
-    // Density-based buoyancy using the shared ambient density field.
-    // Sample a 3x3 neighborhood average around the fluid-side cell (the
-    // one that actually contains the gas), then apply Archimedes:
-    //     a = g × (1 − ambient / density)
-    //
-    // Cross-phase behavior emerges from the Receptacle-side computation
-    // of the ambient field: a vapor cell inside a water pool sees
-    // ambient ≈ 1.0 (water), applying a huge upward force on the gas →
-    // bubble rises. A heavy gas (e.g. CO2) in air sees ambient ≈ 0.0012
-    // and density ≈ 0.002, giving a ≈ +0.4g → sinks.
+    // Phase-interface buoyancy. Default is full downward gravity so a
+    // uniform gas cloud in empty air still gets some gravity pull. Apply
+    // Archimedes only when neighbors have a significantly different
+    // density (from another phase or a temperature gradient). This
+    // matches the pflip_advect formulation and avoids the homogeneous
+    // cloud "floats at zero g" bug.
+    const float PHASE_INTERFACE_THRESHOLD = 0.05;
+
     int fluid_cell_idx = (bot_ct == CELL_FLUID) ? bot_idx : top_idx;
     int fcx = fluid_cell_idx % w;
     int fcy = fluid_cell_idx / w;
-    float ambient_sum = 0.0;
-    int ambient_count = 0;
-    for (int ddy = -1; ddy <= 1; ddy++) {
-        for (int ddx = -1; ddx <= 1; ddx++) {
-            int nx = fcx + ddx;
-            int ny = fcy + ddy;
-            if (nx < 0 || nx >= w || ny < 0 || ny >= h) continue;
-            ambient_sum += ambient_density.data[ny * w + nx];
-            ambient_count++;
-        }
-    }
-    float ambient = (ambient_count > 0)
-        ? (ambient_sum / float(ambient_count))
-        : AIR_DENSITY;
 
     // Apply thermal modulation to the gas's density: hot gas is lighter.
     float density = substance_props.data[face_sub].z;
@@ -147,11 +131,31 @@ void main() {
     thermal_factor = clamp(thermal_factor, 0.1, 2.0);
     density *= thermal_factor;
 
-    float effective_g;
-    if (density > 0.0) {
+    // Scan 3x3 neighbors for cells with significantly different density.
+    float external_sum = 0.0;
+    int external_count = 0;
+    for (int ddy = -1; ddy <= 1; ddy++) {
+        for (int ddx = -1; ddx <= 1; ddx++) {
+            int nx = fcx + ddx;
+            int ny = fcy + ddy;
+            if (nx < 0 || nx >= w || ny < 0 || ny >= h) continue;
+            float n_density = ambient_density.data[ny * w + nx];
+            float rel_diff = abs(n_density - density) / max(density, 0.0001);
+            if (rel_diff > PHASE_INTERFACE_THRESHOLD) {
+                external_sum += n_density;
+                external_count++;
+            }
+        }
+    }
+
+    float effective_g = BASE_GRAVITY;
+    if (external_count > 0 && density > 0.0) {
+        // At a phase interface — apply Archimedes with the external cells
+        // as ambient. A gas bubble in water sees water ambient and rises;
+        // a heavy gas in lighter gas sees the lighter as ambient and sinks.
+        float ambient = external_sum / float(external_count);
         effective_g = BASE_GRAVITY * (1.0 - ambient / density);
-    } else {
-        effective_g = BASE_GRAVITY;
+        effective_g = max(effective_g, -3.0 * BASE_GRAVITY);
     }
 
     v_vel.data[v_idx(x, y, w)] += effective_g * params.delta_time;

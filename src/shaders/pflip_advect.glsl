@@ -94,55 +94,63 @@ void main() {
     int w = params.grid_width;
     int h = params.grid_height;
 
-    // Archimedes buoyancy body force. Sample the shared ambient density
-    // field over a 3x3 neighborhood around this particle's current cell,
-    // then compute effective_g = g × (1 − ambient / self). Rising (negative)
-    // acceleration is capped at −3g to prevent extreme accelerations from
-    // huge density ratios (e.g. gas bubbles in water would otherwise give
-    // thousands of g's in one step).
+    // Phase-interface buoyancy. Default behavior is full gravity — matches
+    // the pre-buoyancy sim exactly, so a uniform water blob in free fall or
+    // a water pool interior both fall at g. We only switch to Archimedes
+    // when neighbors actually have a DIFFERENT phase (density differs from
+    // self by more than PHASE_INTERFACE_THRESHOLD). In that case we use
+    // only the "different" neighbors to compute ambient, ignoring same-phase
+    // neighbors. This avoids the "3x3 average smears the interior of a
+    // falling blob to zero net force" bug from the previous formulation.
+    //
+    // Behavior cheatsheet:
+    //  water blob interior (all water nbrs)     → 0 external → effective_g = g
+    //  water pool interior                      → 0 external → effective_g = g
+    //  water edge next to air                   → external=air, g × (1 − 0.001) ≈ g
+    //  oil at water interface                   → external=water, g × (1 − 1/0.8) = −0.25g ↑
+    //  gas bubble in water                      → external=water, −3g clamped ↑↑↑
+    //  mercury in water                         → external=water, g × (1 − 1/13.5) ≈ 0.93g ↓
+    //  hot water parcel in cold water           → external=cold, thermal-modulated diff ↑
+    const float PHASE_INTERFACE_THRESHOLD = 0.05;
+
     int cx = clamp(int(floor(p.pos.x)), 0, w - 1);
     int cy = clamp(int(floor(p.pos.y)), 0, h - 1);
-    float ambient_sum = 0.0;
-    int ambient_count = 0;
-    for (int ddy = -1; ddy <= 1; ddy++) {
-        for (int ddx = -1; ddx <= 1; ddx++) {
-            int nx = cx + ddx;
-            int ny = cy + ddy;
-            if (nx < 0 || nx >= w || ny < 0 || ny >= h) continue;
-            ambient_sum += ambient_density.data[ny * w + nx];
-            ambient_count++;
-        }
-    }
-    float ambient = (ambient_count > 0)
-        ? (ambient_sum / float(ambient_count))
-        : AIR_DENSITY;
 
-    // Base density from substance table, then modulate by cell temperature
-    // for thermal buoyancy. Hot fluid becomes effectively lighter — a hot
-    // water parcel surrounded by cold water will rise via Archimedes.
+    // Base density from substance table, then modulate by cell temperature.
     float self_density = substance_props.data[p.substance_id].z;
     float cell_temp = temperature.data[cy * w + cx];
     float thermal_factor = 1.0 - THERMAL_EXPANSION * (cell_temp - REFERENCE_TEMP);
     thermal_factor = clamp(thermal_factor, 0.1, 2.0);
     self_density *= thermal_factor;
 
+    // Scan 3x3 for cells with significantly different density.
+    float external_sum = 0.0;
+    int external_count = 0;
+    for (int ddy = -1; ddy <= 1; ddy++) {
+        for (int ddx = -1; ddx <= 1; ddx++) {
+            int nx = cx + ddx;
+            int ny = cy + ddy;
+            if (nx < 0 || nx >= w || ny < 0 || ny >= h) continue;
+            float n_density = ambient_density.data[ny * w + nx];
+            float rel_diff = abs(n_density - self_density) / max(self_density, 0.0001);
+            if (rel_diff > PHASE_INTERFACE_THRESHOLD) {
+                external_sum += n_density;
+                external_count++;
+            }
+        }
+    }
+
     float effective_g = GRAVITY;
-    if (self_density > 0.0001) {
+    if (external_count > 0 && self_density > 0.0001) {
+        // At a phase interface — apply Archimedes using only the external
+        // (different-phase) neighbor cells as the ambient.
+        float ambient = external_sum / float(external_count);
         effective_g = GRAVITY * (1.0 - ambient / self_density);
+        // Clamp extreme rises. Gas-in-water gives -1666g; clamped to -3g
+        // still looks dramatic visually without blowing the integration step.
+        effective_g = max(effective_g, -3.0 * GRAVITY);
     }
-    // Clamp extreme rises. Gas-in-water gives -1666g; clamped to -3g still
-    // looks dramatic visually without blowing the integration step.
-    effective_g = max(effective_g, -3.0 * GRAVITY);
-    // Homogeneous-column floor: pure Archimedes gives zero force when
-    // ambient == self, and our pressure solver isn't density-aware enough
-    // to hold a pool up via pressure alone. Apply a small minimum downward
-    // force only when ambient is within ±5% of self (same-substance column).
-    // Oil-in-water, gas-in-liquid, etc. all have ratios outside this range
-    // and get full Archimedes rising, not the floor.
-    float density_ratio = ambient / max(self_density, 0.0001);
-    if (density_ratio >= 0.95 && density_ratio <= 1.05) {
-        effective_g = max(effective_g, 0.2 * GRAVITY);
-    }
+    // else: homogeneous region, use full gravity unchanged
     p.vel.y += effective_g * params.delta_time;
 
     // Density-and-speed-conditional drag. Drag only applies if the particle

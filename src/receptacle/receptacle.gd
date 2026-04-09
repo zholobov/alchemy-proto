@@ -33,6 +33,13 @@ var fluid_solver: ParticleFluidSolver
 ## ambient for cells with no liquid or vapor present.
 const AIR_DENSITY := 0.0012
 
+## Thermal expansion per °C above the reference temperature. Must match
+## THERMAL_EXPANSION in pflip_advect.glsl and fluid_body_forces.glsl so
+## ambient density and self density see the same temperature-driven
+## scaling. 25x exaggerated vs real water (0.0002/°C) for visible convection.
+const THERMAL_EXPANSION := 0.005
+const REFERENCE_TEMP := 20.0
+
 ## Canonical oval parameters in pixel space — single source of truth.
 ## All three systems (grid boundary, collision, drawing) derive from these.
 var _oval_cx_px: float
@@ -213,11 +220,12 @@ func sync_from_gpu() -> void:
 func compute_ambient_density() -> void:
 	## Walk every cell and compute the ambient density from the heaviest phase
 	## present: liquid first (via liquid_readback.markers), then vapor (via
-	## vapor_sim.markers), falling back to AIR_DENSITY. The resulting field is
-	## uploaded to both solvers so their Archimedes-based body forces know
-	## what each particle/cell is "surrounded by" — enabling gas bubbles to
-	## rise in liquid, oil to rise in water, mercury to sink through water,
-	## etc. See the inter-phase buoyancy plan for the full physics rationale.
+	## vapor_sim.markers), falling back to AIR_DENSITY. Apply thermal
+	## modulation so hot cells show up as lower ambient density — required
+	## for the shader's phase-interface detection to trigger on temperature
+	## differences within the same substance (convection). The resulting
+	## field is uploaded to both solvers so their body forces can do
+	## Archimedes buoyancy against the "other phase around me".
 	##
 	## Sampled from LAST frame's readback (sync_from_gpu ran before this),
 	## so there's a 1-frame lag between state change and buoyancy response.
@@ -226,6 +234,7 @@ func compute_ambient_density() -> void:
 	var liquid_markers: PackedInt32Array = liquid_readback.markers if liquid_readback else PackedInt32Array()
 	var vapor_markers: PackedInt32Array = vapor_sim.markers if vapor_sim else PackedInt32Array()
 	var liquid_densities: PackedFloat32Array = liquid_readback.densities if liquid_readback else PackedFloat32Array()
+	var temperatures: PackedFloat32Array = grid.temperatures
 
 	for i in range(cell_count):
 		var max_density := AIR_DENSITY
@@ -251,6 +260,14 @@ func compute_ambient_density() -> void:
 				var sub := SubstanceRegistry.get_substance(vid)
 				if sub and sub.density > max_density:
 					max_density = sub.density
+
+		# Thermal modulation: hot cells are less dense. Matches the in-shader
+		# thermal scaling so self and ambient are compared on the same basis.
+		if i < temperatures.size():
+			var temp: float = temperatures[i]
+			var thermal_factor: float = 1.0 - THERMAL_EXPANSION * (temp - REFERENCE_TEMP)
+			thermal_factor = clampf(thermal_factor, 0.1, 2.0)
+			max_density *= thermal_factor
 
 		ambient_density[i] = max_density
 
