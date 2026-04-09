@@ -30,6 +30,17 @@ const MAX_BUOYANCY_FACTOR: float = 8.0
 ## Slightly underdamped → body settles with ≤1 gentle overshoot.
 const DRAG_COEF: float = 300.0
 
+## Torque from asymmetric submersion is scaled down by this factor.
+## Raw torque is very strong (offset_px × net_force); 0.02 makes it a
+## gentle righting hint that takes ~1 second to correct a 30° tilt.
+const TORQUE_SCALE: float = 0.02
+
+## Lerp factor for smoothing torque between frames. Low values (0.05–0.1)
+## act as a low-pass filter that kills jitter from the discretized
+## submerged-cell set changing frame to frame. Higher = more responsive
+## but more jittery.
+const TORQUE_SMOOTHING: float = 0.08
+
 var grid: ParticleGrid
 var _bodies: Array[RigidBody2D] = []
 ## Set to true to print per-frame buoyancy diagnostics to stdout.
@@ -320,13 +331,21 @@ func apply_liquid_forces(
 			# At damp=30, velocity halves in ~0.023s (≈1.4 frames). Strong
 			# but stable because Godot integrates it within the step.
 			body.linear_damp = DRAG_COEF * float(submerged_cells) * MASS_SCALE / maxf(body.mass, 0.01)
+			# Angular damping prevents rotational oscillation from the
+			# restoring torque. Same scaling as linear damp.
+			body.angular_damp = DRAG_COEF * float(submerged_cells) * MASS_SCALE / maxf(body.mass, 0.01)
 		else:
-			body.linear_damp = 0.5  # small air resistance
+			body.linear_damp = 0.5
+			body.angular_damp = 0.5
 
-		# Torque from asymmetric submersion (tilts the body).
+		# Torque from asymmetric submersion (tilts the body like a boat).
+		# Scaled down (TORQUE_SCALE) so it's a gentle righting hint, and
+		# smoothed via lerp to kill frame-to-frame jitter from the
+		# discretized submerged-cell set changing as the body rocks.
 		if total_mass > 0.0:
 			var center := Vector2(sum_x / total_mass, sum_y / total_mass)
 			var offset := center - body.global_position
-			body.constant_torque = offset.x * net_y
+			var target_torque := offset.x * net_y * TORQUE_SCALE
+			body.constant_torque = lerpf(body.constant_torque, target_torque, TORQUE_SMOOTHING)
 		else:
-			body.constant_torque = 0.0
+			body.constant_torque = lerpf(body.constant_torque, 0.0, TORQUE_SMOOTHING)
