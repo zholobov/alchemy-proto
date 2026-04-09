@@ -41,6 +41,10 @@ layout(set = 0, binding = 3, std430) restrict buffer CellTypeBuffer {
     int data[];
 } cell_type;
 
+layout(set = 0, binding = 4, std430) restrict buffer ObstacleMask {
+    uint data[];
+} obstacle_mask;
+
 const int CELL_AIR = 0;
 const int CELL_FLUID = 1;
 const int CELL_WALL = 2;
@@ -58,7 +62,7 @@ void main() {
 
     int idx = y * w + x;
 
-    if (boundary.data[idx] == 0) {
+    if (boundary.data[idx] == 0 || obstacle_mask.data[idx] > 0u) {
         cell_type.data[idx] = CELL_WALL;
     } else if (density.data[idx] > FLUID_THRESHOLD) {
         cell_type.data[idx] = CELL_FLUID;

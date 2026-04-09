@@ -55,6 +55,12 @@ layout(set = 0, binding = 6, std430) restrict buffer Temperature {
     float data[];
 } temperature;
 
+layout(set = 0, binding = 7, std430) restrict buffer ObstacleMask {
+    // Per-cell obstacle mask. 1 = rigid body occupies this cell (treat as wall).
+    // Uploaded each frame from the rasterized rigid-body polygons.
+    uint data[];
+} obstacle_mask;
+
 const float GRAVITY = 60.0;        // cells per second^2 (Tier 1 tuning)
 const float MAX_VELOCITY = 100.0;  // CFL: at 120 FPS, max move = 100/120 = 0.83 cells
 const float AIR_DENSITY = 0.0012;  // normalized air density (water = 1.0)
@@ -81,7 +87,8 @@ const float DRAG_SPEED_FALLOFF = 50.0;     // drag = 0 at this speed and above
 
 bool is_wall(int cx, int cy, int w, int h) {
     if (cx < 0 || cx >= w || cy < 0 || cy >= h) return true;
-    return boundary.data[cy * w + cx] == 0;
+    int idx = cy * w + cx;
+    return boundary.data[idx] == 0 || obstacle_mask.data[idx] > 0u;
 }
 
 void main() {

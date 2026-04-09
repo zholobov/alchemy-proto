@@ -84,6 +84,7 @@ var buf_pressure: RID
 var buf_pressure_out: RID
 var buf_cell_density: RID  # per-cell density (cell_mass / count) for variable-density Poisson
 var buf_cell_mass: RID     # sum of per-particle substance densities, atomic-accumulated in p2g
+var buf_obstacle_mask: RID  # uint per cell, 1 = rigid body occupies this cell
 
 # Shaders
 var shader_clear_grid: RID
@@ -381,6 +382,15 @@ func upload_temperatures(data: PackedFloat32Array) -> void:
 	rd.buffer_update(buf_temperature, 0, cell_count * 4, data.to_byte_array())
 
 
+func upload_obstacle_mask(data: PackedInt32Array) -> void:
+	## Upload rigid-body obstacle mask to the GPU. Each cell is 0 (free) or
+	## 1 (occupied by a rigid body). classify and advect treat occupied cells
+	## as walls. Called by the mediator after rasterizing rigid-body polygons.
+	if data.size() < cell_count:
+		return
+	rd.buffer_update(buf_obstacle_mask, 0, cell_count * 4, data.to_byte_array())
+
+
 func upload_substance_properties() -> void:
 	## Populate the substance properties buffer from SubstanceRegistry.
 	## Layout: vec4 per substance — .x = viscosity, .y = flip_ratio,
@@ -452,7 +462,8 @@ func cleanup() -> void:
 			  buf_u_weights, buf_v_weights, buf_u_old, buf_v_old, buf_u_temp, buf_v_temp,
 			  buf_density_count, buf_density_float, buf_substance, buf_substance2,
 			  buf_substance_props, buf_cell_type, buf_divergence, buf_pressure, buf_pressure_out,
-			  buf_cell_density, buf_cell_mass, buf_kill_mask, buf_ambient_density, buf_temperature]:
+			  buf_cell_density, buf_cell_mass, buf_kill_mask, buf_ambient_density, buf_temperature,
+			  buf_obstacle_mask]:
 		if b.is_valid():
 			rd.free_rid(b)
 
@@ -541,6 +552,12 @@ func _create_buffers(boundary_mask: PackedByteArray) -> void:
 	buf_pressure_out = rd.storage_buffer_create(cell_count * 4, cell_zeros_f.to_byte_array())
 	buf_cell_density = rd.storage_buffer_create(cell_count * 4, cell_zeros_f.to_byte_array())
 	buf_cell_mass = rd.storage_buffer_create(cell_count * 4, cell_zeros_f.to_byte_array())
+
+	# Obstacle mask (uint per cell). Rigid-body rasterizer marks occupied cells
+	# as 1; classify and advect treat them as walls. Starts empty (all zeros).
+	var obstacle_zeros := PackedInt32Array()
+	obstacle_zeros.resize(cell_count)
+	buf_obstacle_mask = rd.storage_buffer_create(cell_count * 4, obstacle_zeros.to_byte_array())
 
 
 func _compile_shaders() -> void:
@@ -660,6 +677,7 @@ func _create_pipelines() -> void:
 		[4, buf_density_float],
 		[5, buf_ambient_density],
 		[6, buf_temperature],
+		[7, buf_obstacle_mask],
 	])
 
 	# classify (reuses fluid_classify.glsl)
@@ -669,6 +687,7 @@ func _create_pipelines() -> void:
 		[1, buf_density_float],
 		[2, buf_boundary],
 		[3, buf_cell_type],
+		[4, buf_obstacle_mask],
 	])
 
 	# wall_zero
