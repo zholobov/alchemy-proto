@@ -322,80 +322,126 @@ func apply_liquid_forces(
 				break
 
 		# --- Count body cells below the fluid surface ---
-		# Read fluid density PER ROW from the reference column, not once
-		# for the whole body. In layered pools (water over mercury), body
-		# cells in the mercury layer use mercury's density (13.5) while
-		# cells in the water layer use water's density (1.0). Iron sinks
-		# through water but floats at the water-mercury interface.
-		var total_mass := 0.0
-		var sum_x := 0.0
-		var sum_y := 0.0
-		var submerged_cells := 0
+		# --- Hydrostatic pressure integration over body surface ---
+		#
+		# Two pressure sources per body column cx:
+		#   TOP face: from ACTUAL fluid directly above the body at column cx.
+		#     This captures locally-poured mercury pressing down on the block.
+		#   BOTTOM face: from REFERENCE column (undisturbed). In an
+		#     incompressible fluid, pressure at any depth equilibrates
+		#     horizontally, so the reference column gives the correct
+		#     bottom-face pressure regardless of what's on top of the body.
+		#
+		# Net: buoyancy when bottom_p > top_p. Mercury-on-wood adds to top_p
+		# → less net upward → block sinks deeper. Asymmetric mercury (poured
+		# on one side) creates asymmetric top_p → torque → block tilts.
 
-		if found_liquid:
-			for cy in range(cy_min, cy_max + 1):
-				var py := (cy + 0.5) * cell_size_px
-				if py < surface_py:
-					continue  # above fluid surface — not submerged
-				# Read fluid density at THIS depth from the reference column.
-				var ref_idx := cy * grid_width + ref_cx
-				var row_density := 0.0
+		# Reference column pressure (for bottom faces).
+		var pressure_ref := PackedFloat32Array()
+		pressure_ref.resize(grid_height + 1)
+		var cumulative_p := 0.0
+		var surface_row := int(surface_py / cell_size_px) if found_liquid else grid_height
+		for ry in range(grid_height):
+			pressure_ref[ry] = cumulative_p
+			if ry >= surface_row:
+				var ref_idx := ry * grid_width + ref_cx
 				if ref_idx < liquid_readback.markers.size():
 					var marker: int = liquid_readback.markers[ref_idx]
 					if marker > 0:
 						var lsub := SubstanceRegistry.get_substance(marker)
 						if lsub:
-							row_density = lsub.density
-				if row_density <= 0.01:
-					continue  # no liquid at this depth in reference column
-				for cx in range(cx_min, cx_max + 1):
-					var px := (cx + 0.5) * cell_size_px
-					if not PolygonRasterizer._point_in_polygon(px, py, world_verts):
-						continue
+							cumulative_p += lsub.density * cell_size_px * BUOYANCY_G * MASS_SCALE
+		pressure_ref[grid_height] = cumulative_p
+
+		var pressure_force_y := 0.0
+		var pressure_torque := 0.0
+		var submerged_cells := 0
+		var mask := _obstacle_mask_cpu
+		var mask_size := mask.size()
+		var markers := liquid_readback.markers
+		var markers_size := markers.size()
+
+		# Process each body column: compute actual top pressure, then
+		# integrate top/bottom face contributions.
+		for cx in range(cx_min, cx_max + 1):
+			var px := (cx + 0.5) * cell_size_px
+			var arm_x := px - body.position.x
+
+			# Find topmost and bottommost body cells in this column.
+			var top_cy := -1
+			var bot_cy := -1
+			for cy in range(cy_min, cy_max + 1):
+				var py := (cy + 0.5) * cell_size_px
+				if PolygonRasterizer._point_in_polygon(px, py, world_verts):
+					if top_cy == -1:
+						top_cy = cy
+					bot_cy = cy
+
+			if top_cy == -1:
+				continue  # no body cells in this column
+
+			# Actual top pressure: scan fluid directly above this column.
+			# Captures mercury poured locally onto the body.
+			var p_top_actual := 0.0
+			for ry in range(surface_row, top_cy):
+				var ridx := ry * grid_width + cx
+				if ridx < markers_size:
+					var marker: int = markers[ridx]
+					if marker > 0:
+						var lsub := SubstanceRegistry.get_substance(marker)
+						if lsub:
+							p_top_actual += lsub.density * cell_size_px * BUOYANCY_G * MASS_SCALE
+
+			# Top face: actual pressure pushes DOWN.
+			pressure_force_y += p_top_actual * cell_size_px
+			pressure_torque += arm_x * p_top_actual * cell_size_px
+
+			# Bottom face: reference pressure pushes UP.
+			var p_bot_ref := pressure_ref[mini(bot_cy + 1, grid_height)]
+			pressure_force_y -= p_bot_ref * cell_size_px
+			pressure_torque -= arm_x * p_bot_ref * cell_size_px
+
+			# Count submerged cells in this column for drag.
+			for cy in range(top_cy, bot_cy + 1):
+				var py := (cy + 0.5) * cell_size_px
+				if py >= surface_py:
 					submerged_cells += 1
-					var cell_mass := row_density * cell_size_px * cell_size_px
-					total_mass += cell_mass
-					sum_x += px * cell_mass
-					sum_y += py * cell_mass
 
-		# --- Apply gravity + buoyancy as a persistent net force ---
-		# We disabled Godot's built-in gravity (gravity_scale=0) so we can
-		# combine gravity and buoyancy in the same code path. Using
-		# constant_force (persistent) instead of apply_force (instantaneous)
-		# because apply_force from _process() gets cleared before the next
-		# _physics_process() can consume it.
-		var gravity_force := body.mass * BUOYANCY_G  # weight, downward
-		var buoyancy_force := total_mass * BUOYANCY_G * MASS_SCALE  # upward
-		buoyancy_force = minf(buoyancy_force, MAX_BUOYANCY_FACTOR * gravity_force)
-		var net_y := gravity_force - buoyancy_force  # positive = down
+		# --- Apply gravity + pressure force ---
+		var gravity_force := body.mass * BUOYANCY_G
+		var net_y := gravity_force + pressure_force_y  # pressure_force_y is net (positive=down from top, negative=up from bottom)
+		# Safety clamp.
+		var max_net := MAX_BUOYANCY_FACTOR * gravity_force
+		net_y = clampf(net_y, -max_net, max_net)
 
-# --- Set forces ---
-		# constant_force carries gravity + buoyancy (position-dependent).
-		# linear_damp carries drag (velocity-dependent) — Godot applies
-		# this INSIDE the physics integrator so there's no 1-frame lag
-		# and no overshoot/divergence from stale velocity values.
 		body.constant_force = Vector2(0, net_y)
 
-		# Average fluid density across submerged cells (for drag + debug).
-		var avg_fluid_density := total_mass / maxf(float(submerged_cells) * cell_size_px * cell_size_px, 0.01) if submerged_cells > 0 else 0.0
+		# Average fluid density for drag (approximate from pressure at body center).
+		var body_center_row := clampi((cy_min + cy_max) / 2, 0, grid_height - 1)
+		var avg_fluid_density := 0.0
+		if body_center_row < grid_height:
+			var ref_idx := body_center_row * grid_width + ref_cx
+			if ref_idx < liquid_readback.markers.size():
+				var marker: int = liquid_readback.markers[ref_idx]
+				if marker > 0:
+					var lsub := SubstanceRegistry.get_substance(marker)
+					if lsub:
+						avg_fluid_density = lsub.density
 
 		if debug_buoyancy and Engine.get_process_frames() % 60 == 0:
-			print("[BUOY] %s: Y=%.0f vel=%.0f sub=%d surf=%.0f dens=%.2f buoy=%.0f grav=%.0f net=%.0f mass=%.2f" % [
+			print("[BUOY] %s: Y=%.0f vel=%.0f sub=%d surf=%.0f dens=%.2f pforce=%.0f grav=%.0f net=%.0f mass=%.2f" % [
 				body.get_meta("substance_name", "?"),
 				body.global_position.y, body.linear_velocity.y,
 				submerged_cells, surface_py, avg_fluid_density,
-				buoyancy_force, gravity_force, net_y, body.mass])
+				pressure_force_y, gravity_force, net_y, body.mass])
 
 		if submerged_cells > 0:
-			# Density-adaptive drag. For FLOATING bodies (density < avg fluid),
-			# scale drag with excess buoyancy to prevent surface oscillation.
-			# For SINKING bodies (density > avg fluid), use moderate fixed drag.
 			var density_ratio := sub.density / maxf(avg_fluid_density, 0.01)
 			var buoyancy_margin: float
 			if density_ratio <= 1.0:
-				buoyancy_margin = 1.0 - density_ratio  # wood=0.35, ice=0.08, iron-in-mercury=0.42
+				buoyancy_margin = 1.0 - density_ratio
 			else:
-				buoyancy_margin = 0.2  # fixed moderate drag for sinking objects
+				buoyancy_margin = 0.2
 			var damp_scale := 1.0 + buoyancy_margin * DRAG_BUOYANCY_SCALE
 			var effective_damp := DRAG_COEF * damp_scale * float(submerged_cells) * MASS_SCALE / maxf(body.mass, 0.01)
 			body.linear_damp = effective_damp
@@ -404,14 +450,6 @@ func apply_liquid_forces(
 			body.linear_damp = 0.5
 			body.angular_damp = 0.5
 
-		# Torque from asymmetric submersion (tilts the body like a boat).
-		# Scaled down (TORQUE_SCALE) so it's a gentle righting hint, and
-		# smoothed via lerp to kill frame-to-frame jitter from the
-		# discretized submerged-cell set changing as the body rocks.
-		if total_mass > 0.0:
-			var center := Vector2(sum_x / total_mass, sum_y / total_mass)
-			var offset := center - body.global_position
-			var target_torque := offset.x * net_y * TORQUE_SCALE
-			body.constant_torque = lerpf(body.constant_torque, target_torque, TORQUE_SMOOTHING)
-		else:
-			body.constant_torque = lerpf(body.constant_torque, 0.0, TORQUE_SMOOTHING)
+		# Torque from pressure asymmetry (tilts the body).
+		var target_torque := pressure_torque * TORQUE_SCALE
+		body.constant_torque = lerpf(body.constant_torque, target_torque, TORQUE_SMOOTHING)
