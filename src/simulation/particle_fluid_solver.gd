@@ -147,6 +147,10 @@ var uset_apply_kills: RID
 var _kill_mask_cpu: PackedInt32Array
 var _kill_mask_dirty: bool = false
 
+# Accumulator for fixed-timestep stepping. Carries over unused time
+# between frames so no simulation time is ever lost.
+var _sim_accumulator: float = 0.0
+
 # Dispatch dimensions
 var groups_grid_x: int
 var groups_grid_y: int
@@ -181,30 +185,35 @@ func setup(w: int, h: int, boundary_mask: PackedByteArray = PackedByteArray()) -
 	print("ParticleFluidSolver initialized: %dx%d, max %d particles" % [w, h, MAX_PARTICLES])
 
 
+## Sim time actually processed in the last step() call. Read by
+## main.gd for sim-time-based mediator throttling.
+var last_sim_time: float = 0.0
+
+
 func step(frame_delta: float) -> void:
 	## Advance the simulation by `frame_delta` seconds of wall time.
-	## Internally sub-steps so each underlying integration uses a fixed dt
-	## of TARGET_DT (matching the FPS the shader constants were tuned for).
-	## _readback() runs once at the end — sub-stepping does not increase
-	## GPU-to-CPU stall count.
+	## Uses accumulator-based stepping: each substep always uses exactly
+	## TARGET_DT. If the frame is slow, fewer substeps run — the sim
+	## slows down instead of losing time. This guarantees deterministic
+	## outcomes regardless of render FPS.
+	##
+	## MAX_SUBSTEPS still caps per-frame work to prevent a death spiral
+	## at extremely low FPS, but the leftover accumulator carries over
+	## to the next frame rather than being discarded.
 	frame_delta = clampf(frame_delta, 0.0, MAX_FRAME_DT)
-	if frame_delta <= 0.0:
-		_readback()
-		return
+	_sim_accumulator += frame_delta
 
-	# Mediator-queued kill pass. Runs ONCE per frame (not once per substep),
-	# at the top so the remaining substeps act on the culled particle set.
-	# No-op on frames when no reactions consumed liquid cells.
+	# Mediator-queued kill pass. Runs ONCE per frame (not once per substep).
 	if _kill_mask_dirty:
 		_flush_kill_mask()
 
-	var num_substeps := maxi(1, ceili(frame_delta / TARGET_DT))
-	num_substeps = mini(num_substeps, MAX_SUBSTEPS)
-	var sub_delta := frame_delta / float(num_substeps)
+	var steps_done := 0
+	while _sim_accumulator >= TARGET_DT and steps_done < MAX_SUBSTEPS:
+		_single_step(TARGET_DT)
+		_sim_accumulator -= TARGET_DT
+		steps_done += 1
 
-	for i in range(num_substeps):
-		_single_step(sub_delta)
-
+	last_sim_time = float(steps_done) * TARGET_DT
 	_readback()
 
 

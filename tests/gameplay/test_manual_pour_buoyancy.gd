@@ -13,7 +13,7 @@ func run() -> Array[Dictionary]:
 	# This calls main._on_substance_pouring each frame, same as holding
 	# the mouse button on a liquid substance.
 	print("  Pouring water via game API for 180 frames (~3 sec)...")
-	await pour_liquid("Water", center, 180)
+	await pour_liquid("Water", center, 300)  # more frames for accumulator-based sim
 	print("  Letting water settle for 120 frames...")
 	await wait_frames(120)
 

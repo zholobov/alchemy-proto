@@ -371,7 +371,61 @@ gd-alchemy-proto/
 
 ---
 
-## 9. Performance Strategy & Technical Risks
+## 9. Deterministic Simulation (Core Architectural Requirement)
+
+The simulation MUST be fully deterministic and frame-rate independent.
+Same user inputs with the same timing MUST produce the same outcomes
+on any machine at any FPS. If a machine lacks the resources to run the
+simulation in real time, the game renders slower — but nothing is
+skipped and no physics time is lost.
+
+**Why:** A core feature is recording user actions and internal game
+clock timing, then replaying them on another game instance on another
+machine to reproduce the same outcomes. This is essential for bug
+reports, sharing experiments, and automated testing.
+
+### Architectural rules
+
+1. **Fixed simulation timestep.** All simulation systems (fluid solver,
+   vapor sim, GPU particle grid, mediator) step at a fixed dt, never
+   a variable frame delta. Use accumulator-based stepping: accumulate
+   real time, drain it in fixed-dt increments, carry leftovers to the
+   next frame.
+
+2. **No render-frame-dependent logic.** Never use
+   `Engine.get_process_frames()`, `delta` from `_process()`, or any
+   value that varies with render FPS in code that affects simulation
+   state. Throttling (e.g. mediator skip) must use simulation time,
+   not frame count.
+
+3. **No simulation time loss.** At low FPS, the simulation runs fewer
+   steps per frame but never skips time. `MAX_SUBSTEPS` caps per-frame
+   work to prevent death spirals, but leftover time carries over in
+   the accumulator.
+
+4. **Deterministic RNG.** All random numbers that affect simulation
+   state (particle jitter, reaction randomness) must come from a
+   seeded `RandomNumberGenerator`, not global `randf()`. The seed is
+   part of the replay recording.
+
+5. **Replay recording (future).** Record user inputs (mouse position,
+   button state, substance selected) at each simulation step, along
+   with the RNG seed. Replay feeds the same inputs at the same sim
+   steps to reproduce identical outcomes.
+
+### Current status (2026-04-09)
+
+- Fluid solver: accumulator-based, always uses TARGET_DT. ✓
+- Mediator: throttled by sim time, not frame count. ✓
+- Vapor sim: single-step with variable delta. ✗ (needs accumulator)
+- GPU particle grid: single-step with variable delta. ✗ (needs accumulator)
+- RNG: uses unseeded randf() everywhere. ✗ (needs seeded RNG)
+- Ambient density / buoyancy: computed once per frame, not per substep. ~
+- Replay recording: not implemented. ✗
+
+---
+
+## 10. Performance Strategy & Technical Risks
 
 ### Performance Budgets
 - **Desktop:** 60 FPS target
@@ -403,7 +457,7 @@ gd-alchemy-proto/
 
 ---
 
-## 10. Visual Style
+## 11. Visual Style
 
 **Prototype phase:** Clean and minimal. Simple shapes, clear colors, readable simulation state. Functional placeholder art.
 

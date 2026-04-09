@@ -23,6 +23,15 @@ var _selected_substance_name: String = ""
 
 const SPAWN_RADIUS := 3
 
+## Mediator runs every MEDIATOR_INTERVAL seconds of SIM TIME (not render
+## frames). Tracked via accumulator so reactions fire deterministically
+## regardless of FPS. 50ms = ~6 fluid solver substeps.
+const MEDIATOR_INTERVAL: float = 0.2  # 200ms sim time = ~5 checks/sec
+var _mediator_time_acc: float = 0.0
+## Sim time actually processed last frame (from fluid solver substeps).
+## Set by the fluid solver step, read by the mediator throttle.
+var _last_sim_time: float = 0.0
+
 
 func _ready() -> void:
 	# Background color.
@@ -207,6 +216,7 @@ func _process(delta: float) -> void:
 	# --- GPU MAC Fluid (incompressible liquid simulation) ---
 	perf_monitor.begin_timing("Fluid Solver")
 	receptacle.fluid_solver.step(delta)
+	_last_sim_time = receptacle.fluid_solver.last_sim_time
 	perf_monitor.end_timing("Fluid Solver")
 
 	# --- CPU Vapor grid (fog, mist, steam) ---
@@ -239,11 +249,12 @@ func _process(delta: float) -> void:
 	receptacle.vapor_sim.upload_temperatures(receptacle.grid.temperatures)
 	perf_monitor.end_timing("Ambient")
 
-	# --- CPU Mediator (run every N frames — reactions are slow chemical
-	# processes, 6 checks/sec is plenty. This is THE main CPU bottleneck:
-	# 79ms scanning 30K cells for reactions in a pure water pool.) ---
+	# --- CPU Mediator (throttled by SIM TIME, not frame count, so
+	# reaction timing is deterministic regardless of render FPS) ---
 	perf_monitor.begin_timing("Mediator")
-	if Engine.get_process_frames() % 5 == 0:
+	_mediator_time_acc += _last_sim_time
+	if _mediator_time_acc >= MEDIATOR_INTERVAL:
+		_mediator_time_acc -= MEDIATOR_INTERVAL
 		var has_substances := receptacle.grid.count_particles() > 0 or receptacle.liquid_readback.count_occupied_cells() > 0
 		if has_substances:
 			mediator.update()
