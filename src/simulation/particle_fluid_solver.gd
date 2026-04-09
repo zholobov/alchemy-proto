@@ -102,6 +102,7 @@ var shader_divergence: RID
 var shader_jacobi: RID
 var shader_gradient: RID
 var shader_compute_cell_density: RID
+var shader_compute_ambient: RID
 var shader_apply_kills: RID
 
 # Pipelines
@@ -120,6 +121,7 @@ var pipeline_divergence: RID
 var pipeline_jacobi: RID
 var pipeline_gradient: RID
 var pipeline_compute_cell_density: RID
+var pipeline_compute_ambient: RID
 var pipeline_apply_kills: RID
 
 # Uniform sets
@@ -139,6 +141,7 @@ var uset_jacobi_ab: RID
 var uset_jacobi_ba: RID
 var uset_gradient: RID
 var uset_compute_cell_density: RID
+var uset_compute_ambient: RID
 var uset_apply_kills: RID
 
 # CPU-side staging for the mediator's cell kill mask. Mediator calls
@@ -267,6 +270,8 @@ func _single_step(sub_delta: float) -> void:
 	_cl_dispatch(cl, pipeline_save_vel, uset_save_vel, groups_grid_x, groups_grid_y)
 	rd.compute_list_add_barrier(cl)
 	_cl_dispatch(cl, pipeline_compute_cell_density, uset_compute_cell_density, groups_grid_x, groups_grid_y)
+	rd.compute_list_add_barrier(cl)
+	_cl_dispatch(cl, pipeline_compute_ambient, uset_compute_ambient, groups_grid_x, groups_grid_y)
 	rd.compute_list_add_barrier(cl)
 	_cl_dispatch(cl, pipeline_divergence, uset_divergence, groups_grid_x, groups_grid_y)
 	rd.compute_list_add_barrier(cl)
@@ -462,7 +467,8 @@ func cleanup() -> void:
 			  pipeline_g2p, pipeline_advect, pipeline_classify, pipeline_density_correction,
 			  pipeline_viscosity, pipeline_extrapolate, pipeline_wall_zero,
 			  pipeline_divergence, pipeline_jacobi, pipeline_gradient,
-			  pipeline_compute_cell_density, pipeline_apply_kills]:
+			  pipeline_compute_cell_density, pipeline_compute_ambient,
+			  pipeline_apply_kills]:
 		if p.is_valid():
 			rd.free_rid(p)
 
@@ -470,7 +476,7 @@ func cleanup() -> void:
 	for s in [shader_clear_grid, shader_p2g, shader_normalize, shader_save_vel,
 			  shader_g2p, shader_advect, shader_classify, shader_density_correction,
 			  shader_viscosity, shader_extrapolate, shader_wall_zero, shader_divergence,
-			  shader_jacobi, shader_gradient, shader_compute_cell_density,
+			  shader_jacobi, shader_gradient, shader_compute_cell_density, shader_compute_ambient,
 			  shader_apply_kills]:
 		if s.is_valid():
 			rd.free_rid(s)
@@ -602,6 +608,7 @@ func _compile_shaders() -> void:
 	# VaporSim still uses the uniform-density fluid_jacobi / fluid_gradient
 	# because gases all have similar densities in our normalized scale.
 	shader_compute_cell_density = _load("res://src/shaders/pflip_compute_cell_density.glsl")
+	shader_compute_ambient = _load("res://src/shaders/pflip_compute_ambient.glsl")
 	shader_jacobi = _load("res://src/shaders/pflip_jacobi.glsl")
 	shader_gradient = _load("res://src/shaders/pflip_gradient.glsl")
 
@@ -782,6 +789,18 @@ func _create_pipelines() -> void:
 		[1, buf_cell_mass],
 		[2, buf_density_count],
 		[3, buf_cell_density],
+	])
+
+	# compute_ambient — per-substep ambient density from substance IDs.
+	# Runs in the compute list before advect so Archimedes buoyancy
+	# sees fresh ambient every substep, not once-per-frame stale data.
+	pipeline_compute_ambient = rd.compute_pipeline_create(shader_compute_ambient)
+	uset_compute_ambient = _build_uset(shader_compute_ambient, [
+		[0, buf_params],
+		[1, buf_substance],
+		[2, buf_substance_props],
+		[3, buf_temperature],
+		[4, buf_ambient_density],
 	])
 
 	# jacobi (ping-pong) — variable-density pflip_jacobi reads cell_density

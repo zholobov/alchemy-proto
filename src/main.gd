@@ -28,6 +28,12 @@ var _last_sim_time: float = 0.0
 
 
 func _ready() -> void:
+	# Cap render FPS. Simulation uses fixed-timestep accumulators so it
+	# runs the same number of steps regardless — capping render FPS just
+	# means fewer _process calls per second, giving each frame more
+	# budget for sim work and reducing CPU/GPU waste on extra renders.
+	Engine.max_fps = 30
+
 	# Background color.
 	RenderingServer.set_default_clear_color(Color(0.08, 0.06, 0.1))
 
@@ -236,10 +242,13 @@ func _process(delta: float) -> void:
 	perf_monitor.end_timing("Buoyancy")
 
 	perf_monitor.begin_timing("Ambient")
-	receptacle.compute_ambient_density()
-	receptacle.fluid_solver.upload_ambient_density(receptacle.ambient_density)
-	receptacle.vapor_sim.upload_ambient_density(receptacle.ambient_density)
+	# Fluid solver: ambient density is now computed per-substep on the
+	# GPU (pflip_compute_ambient.glsl). No CPU upload needed.
+	# Temperature is still uploaded once per frame (1-frame lag acceptable).
 	receptacle.fluid_solver.upload_temperatures(receptacle.grid.temperatures)
+	# Vapor sim: still uses CPU-computed ambient for cross-phase buoyancy.
+	receptacle.compute_ambient_density()
+	receptacle.vapor_sim.upload_ambient_density(receptacle.ambient_density)
 	receptacle.vapor_sim.upload_temperatures(receptacle.grid.temperatures)
 	perf_monitor.end_timing("Ambient")
 
