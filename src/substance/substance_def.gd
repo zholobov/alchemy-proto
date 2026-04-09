@@ -24,6 +24,13 @@ enum Phase { SOLID, POWDER, LIQUID, GAS }
 ## lively water; drop toward 0.7-0.85 for sluggish fluids like oil or tar.
 @export_range(0.0, 1.0) var flip_ratio: float = 0.95
 
+@export_group("Shape (SOLID phase only)")
+## Polygon vertices in substance-local pixel coordinates, counter-
+## clockwise. The rigid body's CollisionPolygon2D, visual, and fluid
+## obstacle mask are all derived from this. Empty array falls back to
+## the legacy 30×24 rectangle so existing substances keep working.
+@export var polygon: PackedVector2Array = PackedVector2Array()
+
 @export_group("Thermal")
 @export var melting_point: float = 1000.0  ## Temperature at which solid -> liquid.
 @export var boiling_point: float = 2000.0  ## Temperature at which liquid -> gas.
