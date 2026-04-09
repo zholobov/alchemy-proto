@@ -213,6 +213,15 @@ func _process(delta: float) -> void:
 	# Sync all GPU state (particles + fluid) back to CPU for mediator/rendering.
 	receptacle.sync_from_gpu()
 
+	# --- Rigid-body buoyancy (Archimedes force from displaced liquid) ---
+	receptacle.rigid_body_mgr.apply_liquid_forces(
+		receptacle.fluid_solver,
+		receptacle.liquid_readback,
+		Receptacle.GRID_WIDTH,
+		Receptacle.GRID_HEIGHT,
+		float(Receptacle.CELL_SIZE),
+	)
+
 	# Compute the shared ambient density field and push it to both solvers.
 	# Used on the NEXT frame's step() for per-cell Archimedes buoyancy
 	# (inter-liquid, inter-gas, and gas-liquid cross-phase). 1-frame lag

@@ -5,7 +5,18 @@ extends Node2D
 
 ## Converts polygon-area × density (pixel² × relative-density) into a
 ## RigidBody2D mass value that feels reasonable at the simulation scale.
+## Buoyancy uses the same constant so that displaced-liquid force and body
+## weight are in the same unit system. Adjust this single knob to tune
+## float depth: higher → heavier bodies + stronger buoyancy (ratio stays).
 const MASS_SCALE: float = 0.01
+
+## Gravitational acceleration for buoyancy force — must match GRAVITY in
+## pflip_advect.glsl so rigid-body buoyancy balances liquid gravity.
+const BUOYANCY_G: float = 60.0
+
+## Safety cap: buoyancy force on a body is clamped to this multiple of its
+## weight. Prevents numerical blow-up when a body overlaps many dense cells.
+const MAX_BUOYANCY_FACTOR: float = 8.0
 
 var grid: ParticleGrid
 var _bodies: Array[RigidBody2D] = []
@@ -143,3 +154,94 @@ func compute_obstacle_mask(grid_width: int, grid_height: int, cell_size_px: floa
 		)
 
 	return _obstacle_mask_cpu
+
+
+func apply_liquid_forces(
+	fluid_solver,
+	liquid_readback: LiquidReadback,
+	grid_width: int,
+	grid_height: int,
+	cell_size_px: float,
+) -> void:
+	## Compute Archimedes buoyancy on each rigid body from displaced liquid.
+	## For every body, rasterize its polygon to find which grid cells it
+	## overlaps, accumulate displaced liquid mass, and apply an upward force
+	## at the center of buoyant mass.
+	for body in _bodies:
+		if not is_instance_valid(body):
+			continue
+
+		# --- Get substance polygon (with fallback rectangle) ---
+		var sub_id: int = body.get_meta("substance_id", 0)
+		var sub := SubstanceRegistry.get_substance(sub_id)
+		if not sub:
+			continue
+		var polygon: PackedVector2Array = sub.polygon
+		if polygon.size() < 3:
+			polygon = PackedVector2Array([
+				Vector2(-15, -12), Vector2(15, -12),
+				Vector2(15, 12), Vector2(-15, 12),
+			])
+
+		# --- Transform polygon vertices to world space ---
+		var cos_r := cos(body.rotation)
+		var sin_r := sin(body.rotation)
+		var world_verts := PackedVector2Array()
+		world_verts.resize(polygon.size())
+		for i in polygon.size():
+			var v := polygon[i]
+			world_verts[i] = Vector2(
+				v.x * cos_r - v.y * sin_r + body.position.x,
+				v.x * sin_r + v.y * cos_r + body.position.y,
+			)
+
+		# --- Compute axis-aligned bounding box, clamp to grid ---
+		var min_x := world_verts[0].x
+		var max_x := world_verts[0].x
+		var min_y := world_verts[0].y
+		var max_y := world_verts[0].y
+		for i in range(1, world_verts.size()):
+			var v := world_verts[i]
+			if v.x < min_x: min_x = v.x
+			if v.x > max_x: max_x = v.x
+			if v.y < min_y: min_y = v.y
+			if v.y > max_y: max_y = v.y
+
+		var cx_min := maxi(floori(min_x / cell_size_px), 0)
+		var cx_max := mini(floori(max_x / cell_size_px), grid_width - 1)
+		var cy_min := maxi(floori(min_y / cell_size_px), 0)
+		var cy_max := mini(floori(max_y / cell_size_px), grid_height - 1)
+
+		# --- Accumulate displaced liquid mass ---
+		var total_mass := 0.0
+		var sum_x := 0.0
+		var sum_y := 0.0
+
+		for cy in range(cy_min, cy_max + 1):
+			var row_offset := cy * grid_width
+			for cx in range(cx_min, cx_max + 1):
+				var px := (cx + 0.5) * cell_size_px
+				var py := (cy + 0.5) * cell_size_px
+				if not PolygonRasterizer._point_in_polygon(px, py, world_verts):
+					continue
+				var idx := row_offset + cx
+				var fill_fraction: float = liquid_readback.densities[idx]
+				var marker: int = liquid_readback.markers[idx]
+				if fill_fraction <= 0.0 or marker <= 0:
+					continue
+				var liquid_sub := SubstanceRegistry.get_substance(marker)
+				if not liquid_sub:
+					continue
+				var cell_mass: float = liquid_sub.density * cell_size_px * cell_size_px * fill_fraction
+				total_mass += cell_mass
+				sum_x += px * cell_mass
+				sum_y += py * cell_mass
+
+		# --- Apply upward buoyancy force at center of buoyant mass ---
+		if total_mass > 0.0:
+			var center := Vector2(sum_x / total_mass, sum_y / total_mass)
+			var force_mag: float = total_mass * BUOYANCY_G * MASS_SCALE
+			# Safety clamp to prevent blow-up.
+			var max_force: float = MAX_BUOYANCY_FACTOR * body.mass * BUOYANCY_G
+			force_mag = minf(force_mag, max_force)
+			body.apply_force(Vector2(0, -force_mag), center - body.position)
