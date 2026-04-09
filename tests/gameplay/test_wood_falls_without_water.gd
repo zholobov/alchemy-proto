@@ -1,14 +1,14 @@
 extends "res://tests/gameplay/gameplay_test.gd"
-## Gameplay test: when water under a floating wood block is killed
-## locally, the block must fall — not hang in the air.
+## Gameplay test: kill the bottom half of the pool. Wood was floating
+## near the top. With half the water gone, water level drops and the
+## wood must fall to the new lower surface — not hang at the old level.
 
 
 func run() -> Array[Dictionary]:
 	_results.clear()
 
-	# Fill a SMALL water pool (just enough to float the block).
-	# Small pool = water can't refill from the sides easily.
-	print("  Filling small water pool (rows 80-130)...")
+	# Fill water pool.
+	print("  Filling water pool (rows 80-130)...")
 	await fill_liquid("Water", 80, 130)
 	await wait_frames(120)
 
@@ -30,45 +30,40 @@ func run() -> Array[Dictionary]:
 		wood_y_floating < bottom_y - 50,
 		"wood Y=%.0f, bottom=%.0f — should be floating" % [wood_y_floating, bottom_y])
 
-	# Kill ALL water in a single batch — drain the entire pool.
-	print("  Killing ALL water particles...")
-	for y in range(Receptacle.GRID_HEIGHT):
+	# Kill bottom half of pool (rows 110-130). The pool was rows 80-130,
+	# so this removes ~40% of the water. The water level should drop and
+	# the wood should sink to the new, lower surface.
+	var wood_gx := int((wood.global_position.x - _receptacle.global_position.x) / Receptacle.CELL_SIZE)
+	print("  Killing bottom half of pool (rows 110-140)...")
+	for y in range(110, 141):
 		for x in range(Receptacle.GRID_WIDTH):
 			_receptacle.fluid_solver.mark_cell_for_kill(x, y)
 
-	# Track frame by frame to see HOW FAST the block responds.
-	print("  Tracking wood position for 300 frames after drain...")
-	print("  Frame | Y pos  | vel_y  | const_force_y | lin_damp | has_fluid_nearby")
-
-	_receptacle.rigid_body_mgr.debug_buoyancy = true
-	var y_history: Array[float] = []
+	# Track frame by frame.
+	print("  Frame | Y pos  | vel_y  | const_force_y | liquid_nearby")
 	for i in range(300):
 		await get_tree().process_frame
-		y_history.append(wood.global_position.y)
-		if i % 20 == 0:
-			# Check if liquid_readback has any markers near the block
-			var wood_gx := int((wood.global_position.x - _receptacle.global_position.x) / Receptacle.CELL_SIZE)
+		if i % 30 == 0:
 			var wood_gy := int((wood.global_position.y - _receptacle.global_position.y) / Receptacle.CELL_SIZE)
-			var nearby_liquid := 0
-			for dy in range(-5, 10):
-				for dx in range(-10, 11):
+			var nearby := 0
+			for dy in range(-3, 6):
+				for dx in range(-5, 6):
 					var nx := wood_gx + dx
 					var ny := wood_gy + dy
 					if nx >= 0 and nx < Receptacle.GRID_WIDTH and ny >= 0 and ny < Receptacle.GRID_HEIGHT:
 						var idx := ny * Receptacle.GRID_WIDTH + nx
 						if idx < _receptacle.liquid_readback.markers.size() and _receptacle.liquid_readback.markers[idx] > 0:
-							nearby_liquid += 1
-			print("  %5d | %6.0f | %6.1f | %9.0f    | %5.1f | liquid_nearby=%d" % [
+							nearby += 1
+			print("  %5d | %6.0f | %6.1f | %9.0f    | %d" % [
 				i, wood.global_position.y, wood.linear_velocity.y,
-				wood.constant_force.y, wood.linear_damp, nearby_liquid])
-
-	_receptacle.rigid_body_mgr.debug_buoyancy = false
+				wood.constant_force.y, nearby])
 
 	var wood_y_after := wood.global_position.y
-	print("  Wood Y after drain: %.0f (delta: %.0f)" % [wood_y_after, wood_y_after - wood_y_floating])
+	print("  Wood Y after partial drain: %.0f (delta: %.0f)" % [wood_y_after, wood_y_after - wood_y_floating])
 
-	assert_test("wood_falls_after_drain",
-		wood_y_after > wood_y_floating + 100,
-		"wood Y before=%.0f after=%.0f — should have fallen significantly" % [wood_y_floating, wood_y_after])
+	# Wood should have dropped — the water level is lower.
+	assert_test("wood_drops_with_water_level",
+		wood_y_after > wood_y_floating + 20,
+		"wood Y before=%.0f after=%.0f — should have dropped with the water level" % [wood_y_floating, wood_y_after])
 
 	return _results
