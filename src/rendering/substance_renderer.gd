@@ -69,71 +69,69 @@ func render() -> void:
 	if not grid:
 		return
 
-	var size := grid.width * grid.height
+	# Cache array refs outside the loop to avoid per-iteration property lookups.
+	var cells := grid.cells
+	var boundary := grid.boundary
+	var size := cells.size()
+	var cache := _color_cache
+	var cache_size := cache.size()
+	var has_liquid := liquid != null
+	var liq_markers: PackedInt32Array
+	var liq_densities: PackedFloat32Array
+	var liq_secondary: PackedInt32Array
+	if has_liquid:
+		liq_markers = liquid.markers
+		liq_densities = liquid.densities
+		liq_secondary = liquid.secondary_markers
+	var has_vapor := vapor != null
+	var vap_markers: PackedInt32Array
+	if has_vapor:
+		vap_markers = vapor.markers
+	var pd := _pixel_data
+
 	for i in range(size):
-		var substance_id: int = grid.cells[i]
+		var substance_id: int = cells[i]
 		var color: Color
 
 		if substance_id == 0:
 			color = Color.TRANSPARENT
-		elif substance_id < _color_cache.size():
-			color = _color_cache[substance_id]
+		elif substance_id < cache_size:
+			color = cache[substance_id]
 		else:
 			color = Color.MAGENTA
 
-		# Blend liquid on top if present. Scale liquid alpha by density so thin
-		# cells are translucent and dense cells are opaque. This makes
-		# sparse surface cells fade out gracefully instead of being rendered
-		# as solid color. If the cell holds a second substance (C1), blend
-		# the two substance colors 50/50 before applying density alpha —
-		# this makes water+acid or water+oil interfaces visibly mixed
-		# instead of flickering between the two colors frame-to-frame.
-		if liquid and liquid.markers[i] != 0:
-			var liquid_id: int = liquid.markers[i]
-			var liquid_color: Color
-			if liquid_id < _color_cache.size():
-				liquid_color = _color_cache[liquid_id]
-			else:
-				liquid_color = Color.MAGENTA
-			# Blend in the secondary substance color if this cell is mixed.
-			var secondary_id: int = liquid.secondary_markers[i]
-			if secondary_id > 0 and secondary_id < _color_cache.size():
-				var secondary_color: Color = _color_cache[secondary_id]
-				liquid_color = liquid_color.lerp(secondary_color, 0.5)
-			# Scale by density (clamped 0..1). Use sqrt to make low-density
-			# cells more visible than linear scaling would (sqrt(0.1)=0.32 vs 0.1).
-			var density_factor: float = sqrt(clampf(liquid.densities[i], 0.0, 1.0))
+		if has_liquid and liq_markers[i] != 0:
+			var liquid_id: int = liq_markers[i]
+			var liquid_color: Color = cache[liquid_id] if liquid_id < cache_size else Color.MAGENTA
+			var secondary_id: int = liq_secondary[i]
+			if secondary_id > 0 and secondary_id < cache_size:
+				liquid_color = liquid_color.lerp(cache[secondary_id], 0.5)
+			var density_factor: float = sqrt(clampf(liq_densities[i], 0.0, 1.0))
 			liquid_color.a *= density_factor
 			if color.a > 0:
 				color = color.lerp(liquid_color, liquid_color.a)
 			else:
 				color = liquid_color
 
-		# Blend vapor on top of everything except walls. Vapor uses the
-		# substance's base color scaled down to VAPOR_ALPHA_SCALE so it
-		# reads as fog rather than solid fill.
-		if vapor and vapor.markers[i] != 0:
-			var vapor_id: int = vapor.markers[i]
-			var vapor_color: Color
-			if vapor_id < _color_cache.size():
-				vapor_color = _color_cache[vapor_id]
-			else:
-				vapor_color = Color.MAGENTA
+		if has_vapor and vap_markers[i] != 0:
+			var vapor_id: int = vap_markers[i]
+			var vapor_color: Color = cache[vapor_id] if vapor_id < cache_size else Color.MAGENTA
 			vapor_color.a *= VAPOR_ALPHA_SCALE
 			if color.a > 0:
 				color = color.lerp(vapor_color, vapor_color.a)
 			else:
 				color = vapor_color
 
-		# Boundary walls.
-		if grid.boundary[i] == 0:
+		if boundary[i] == 0:
 			color = Color(0.15, 0.13, 0.12, 1.0)
 
 		var offset := i * 4
-		_pixel_data[offset] = int(color.r8)
-		_pixel_data[offset + 1] = int(color.g8)
-		_pixel_data[offset + 2] = int(color.b8)
-		_pixel_data[offset + 3] = int(color.a8)
+		pd[offset] = color.r8
+		pd[offset + 1] = color.g8
+		pd[offset + 2] = color.b8
+		pd[offset + 3] = color.a8
 
-	_image = Image.create_from_data(grid.width, grid.height, false, Image.FORMAT_RGBA8, _pixel_data)
+	# Reuse the existing Image instead of reallocating every frame.
+	# set_data() updates pixel data in-place (no new allocation).
+	_image.set_data(grid.width, grid.height, false, Image.FORMAT_RGBA8, _pixel_data)
 	_texture.update(_image)

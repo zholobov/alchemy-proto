@@ -217,55 +217,57 @@ func sync_from_gpu() -> void:
 				secondary_markers[i] = 0
 
 
+## Pre-cached density lookup indexed by substance ID. Eliminates 60K
+## SubstanceRegistry.get_substance() calls per frame in
+## compute_ambient_density(). Built once at startup, updated if
+## substances change.
+var _density_by_id: PackedFloat32Array = PackedFloat32Array()
+
+
+func _build_density_cache() -> void:
+	_density_by_id.resize(64)  # MAX_SUBSTANCES
+	_density_by_id.fill(0.0)
+	for i in range(1, SubstanceRegistry.get_count() + 1):
+		var sub := SubstanceRegistry.get_substance(i)
+		if sub:
+			_density_by_id[i] = sub.density
+
+
 func compute_ambient_density() -> void:
-	## Walk every cell and compute the ambient density from the heaviest phase
-	## present: liquid first (via liquid_readback.markers), then vapor (via
-	## vapor_sim.markers), falling back to AIR_DENSITY. Uses SUBSTANCE density
-	## directly — no per-cell fill weighting. Reason: the shader's phase-
-	## interface detection uses a ±5% relative threshold, and natural particle
-	## fill variation inside a homogeneous pool (cells with 6 vs 8 particles,
-	## fills of 0.75 vs 1.0) creates ambient density differences large enough
-	## to falsely trip the threshold, making water floats-on-water and behave
-	## sluggishly. Treating a water cell as "water density = 1.0" regardless
-	## of fill eliminates the false positive: all water cells look the same
-	## to the phase-interface check.
-	##
-	## Thermal modulation still applies: hot cells show up as lower ambient
-	## density so convection within a single substance works. This matches
-	## the in-shader thermal scaling exactly so self and ambient are
-	## compared on the same basis.
-	##
-	## Sampled from LAST frame's readback (sync_from_gpu ran before this),
-	## so there's a 1-frame lag between state change and buoyancy response.
-	## Invisible at 60 FPS.
+	## Walk every cell and compute the ambient density from the heaviest
+	## phase present. Uses a pre-cached density_by_id array instead of
+	## calling SubstanceRegistry.get_substance() per cell (eliminates
+	## 60K function calls/frame). Thermal modulation matches the shader.
+	if _density_by_id.size() < 64:
+		_build_density_cache()
+
 	var cell_count: int = GRID_WIDTH * GRID_HEIGHT
 	var liquid_markers: PackedInt32Array = liquid_readback.markers if liquid_readback else PackedInt32Array()
 	var vapor_markers: PackedInt32Array = vapor_sim.markers if vapor_sim else PackedInt32Array()
 	var temperatures: PackedFloat32Array = grid.temperatures
+	var liq_size := liquid_markers.size()
+	var vap_size := vapor_markers.size()
+	var temp_size := temperatures.size()
+	var density_lut := _density_by_id
 
 	for i in range(cell_count):
 		var max_density := AIR_DENSITY
 
-		# Liquid contribution: substance density as-is, NOT weighted by fill.
-		# A cell with water in it has water density, period.
-		if i < liquid_markers.size():
+		if i < liq_size:
 			var lid: int = liquid_markers[i]
-			if lid > 0:
-				var sub := SubstanceRegistry.get_substance(lid)
-				if sub and sub.density > max_density:
-					max_density = sub.density
+			if lid > 0 and lid < 64:
+				var d: float = density_lut[lid]
+				if d > max_density:
+					max_density = d
 
-		# Vapor contribution.
-		if i < vapor_markers.size():
+		if i < vap_size:
 			var vid: int = vapor_markers[i]
-			if vid > 0:
-				var sub := SubstanceRegistry.get_substance(vid)
-				if sub and sub.density > max_density:
-					max_density = sub.density
+			if vid > 0 and vid < 64:
+				var d: float = density_lut[vid]
+				if d > max_density:
+					max_density = d
 
-		# Thermal modulation: hot cells are less dense. Matches the in-shader
-		# thermal scaling so self and ambient are compared on the same basis.
-		if i < temperatures.size():
+		if i < temp_size:
 			var temp: float = temperatures[i]
 			var thermal_factor: float = 1.0 - THERMAL_EXPANSION * (temp - REFERENCE_TEMP)
 			thermal_factor = clampf(thermal_factor, 0.1, 2.0)
