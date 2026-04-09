@@ -29,6 +29,7 @@ See `docs/superpowers/specs/2026-04-05-alchemy-prototype-design.md` for full des
 - One class per file, one responsibility per class
 - Keep scripts small and focused
 - FPS overlay always visible, game log togglable, perf logging available
+- **Never use `@warning_ignore`** — fix the root cause of every warning. Use explicit `float()` casts for integer division, rename parameters to avoid shadowing, remove truly unused parameters.
 
 ## Key Commands
 

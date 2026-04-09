@@ -89,7 +89,7 @@ func _build_occupied_list() -> void:
 			continue
 
 		var x: int = i % w
-		var y: int = i / w
+		var y: int = floori(float(i) / float(w))
 		_occupied_cells.append(Vector2i(x, y))
 
 		# Track unique substances

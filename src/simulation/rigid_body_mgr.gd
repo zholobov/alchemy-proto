@@ -136,7 +136,7 @@ static func _polygon_area(verts: PackedVector2Array) -> float:
 	return absf(area) * 0.5
 
 
-func inject_render_cells(grid: ParticleGrid, liquid_readback: LiquidReadback) -> void:
+func inject_render_cells(p_grid: ParticleGrid, liquid_readback: LiquidReadback) -> void:
 	## Copy body substance_ids from _obstacle_mask_cpu into grid.cells
 	## so the cell-based renderer draws rigid bodies the same as
 	## everything else. Also clears liquid_readback at body cells so the
@@ -144,10 +144,10 @@ func inject_render_cells(grid: ParticleGrid, liquid_readback: LiquidReadback) ->
 	##
 	## Uses the SAME rasterized cell set as the obstacle mask (same body
 	## transforms, same frame). Call AFTER mediator and BEFORE renderer.
-	var n := mini(_obstacle_mask_cpu.size(), grid.cells.size())
+	var n := mini(_obstacle_mask_cpu.size(), p_grid.cells.size())
 	for i in range(n):
 		if _obstacle_mask_cpu[i] > 0:
-			grid.cells[i] = _obstacle_mask_cpu[i]
+			p_grid.cells[i] = _obstacle_mask_cpu[i]
 			# Clear liquid/vapor at body cells — prevents the renderer
 			# from alpha-blending stale water/vapor data on top of the
 			# body's grid color. Particles take a few frames to escape
@@ -229,20 +229,15 @@ func compute_obstacle_mask(grid_width: int, grid_height: int, cell_size_px: floa
 
 
 func apply_liquid_forces(
-	fluid_solver,
+	_fluid_solver,
 	liquid_readback: LiquidReadback,
-	ambient: PackedFloat32Array,
+	_ambient: PackedFloat32Array,
 	grid_width: int,
 	grid_height: int,
 	cell_size_px: float,
 ) -> void:
-	## Compute Archimedes buoyancy on each rigid body from displaced liquid.
-	## Body cells are WALL (obstacle mask), so liquid_readback.densities is
-	## zero inside the body. Instead, we sample the AMBIENT density of each
-	## body cell's cardinal neighbors to determine if the cell is submerged.
-	## If any neighbor has ambient > 0.01, the cell counts as submerged at
-	## the max neighbor density.
-	const SUBMERSION_THRESHOLD := 0.01
+	## Compute hydrostatic pressure forces on each rigid body from the
+	## surrounding fluid. Uses pressure integration over body surface faces.
 	for body in _bodies:
 		if not is_instance_valid(body):
 			continue
@@ -297,13 +292,16 @@ func apply_liquid_forces(
 		var ref_candidates: Array[int] = []
 		# Prefer columns well inside the oval: 1/4 and 3/4 of grid width,
 		# then center, then edges. Skip any that overlap the body's bbox.
-		for c in [grid_width / 4, grid_width * 3 / 4, grid_width / 2, 30, grid_width - 30]:
+		var gw4: int = floori(float(grid_width) / 4.0)
+		var gw34: int = floori(float(grid_width) * 3.0 / 4.0)
+		var gw2: int = floori(float(grid_width) / 2.0)
+		for c in [gw4, gw34, gw2, 30, grid_width - 30]:
 			if c < cx_min - 5 or c > cx_max + 5:
 				ref_candidates.append(c)
 		# If ALL candidates overlap the body (huge body or bad luck), just
 		# use the first candidate anyway — some data is better than none.
 		if ref_candidates.is_empty():
-			ref_candidates.append(grid_width / 4)
+			ref_candidates.append(gw4)
 
 		# Find the fluid surface Y (topmost liquid row in a reference column).
 		var ref_cx := ref_candidates[0]
@@ -437,7 +435,7 @@ func apply_liquid_forces(
 		body.constant_force = Vector2(0, net_y)
 
 		# Average fluid density for drag (approximate from pressure at body center).
-		var body_center_row := clampi((cy_min + cy_max) / 2, 0, grid_height - 1)
+		var body_center_row := clampi(floori(float(cy_min + cy_max) / 2.0), 0, grid_height - 1)
 		var avg_fluid_density := 0.0
 		if body_center_row < grid_height:
 			var ref_idx := body_center_row * grid_width + ref_cx
