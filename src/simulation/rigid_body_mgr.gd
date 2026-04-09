@@ -396,16 +396,13 @@ func apply_liquid_forces(
 			pressure_force_y += p_top_actual * cell_size_px
 			pressure_torque += arm_x * p_top_actual * cell_size_px
 
-			# Bottom face: reference pressure pushes UP — but ONLY if fluid
-			# exists nearby below the body. Without this check, the reference
-			# column provides phantom buoyancy when local water has drained.
-			# Check a small neighborhood (±3 cells horizontal, +1..+3 cells
-			# below) to avoid oscillation from the body displacing its own
-			# support in the cells directly beneath it.
-			var has_fluid_below := false
+			# Bottom face: reference pressure pushes UP, scaled by the
+			# FRACTION of nearby cells that have fluid. This prevents
+			# stray particles (1-2 cells in the check area) from providing
+			# full buoyancy as if a complete pool were present.
+			var fluid_cells_below := 0
+			var check_cells_below := 0
 			for check_dy in range(1, 4):
-				if has_fluid_below:
-					break
 				var check_row := bot_cy + check_dy
 				if check_row >= grid_height:
 					break
@@ -414,15 +411,15 @@ func apply_liquid_forces(
 					if check_cx < 0 or check_cx >= grid_width:
 						continue
 					var check_idx := check_row * grid_width + check_cx
+					check_cells_below += 1
 					if check_idx < markers_size and markers[check_idx] > 0:
-						# Verify this isn't another body's cell
 						if check_idx >= mask_size or mask[check_idx] == 0:
-							has_fluid_below = true
-							break
-			if has_fluid_below:
+							fluid_cells_below += 1
+			if fluid_cells_below > 0 and check_cells_below > 0:
+				var fill_fraction := float(fluid_cells_below) / float(check_cells_below)
 				var p_bot_ref := pressure_ref[mini(bot_cy + 1, grid_height)]
-				pressure_force_y -= p_bot_ref * cell_size_px
-				pressure_torque -= arm_x * p_bot_ref * cell_size_px
+				pressure_force_y -= p_bot_ref * cell_size_px * fill_fraction
+				pressure_torque -= arm_x * p_bot_ref * cell_size_px * fill_fraction
 
 			# Count submerged cells in this column for drag.
 			for cy in range(top_cy, bot_cy + 1):
