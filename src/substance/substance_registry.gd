@@ -24,6 +24,7 @@ const SUBSTANCE_PATHS: Array[String] = [
 	"res://data/substances/acid.tres",
 	"res://data/substances/flammable_gas.tres",
 	"res://data/substances/steam.tres",
+	"res://data/substances/wood.tres",
 ]
 
 var substances: Array[SubstanceDef] = []

@@ -43,7 +43,7 @@ var _frame_count: int = 0
 
 # Substance table constants
 const SUBSTANCE_STRIDE := 12
-const MAX_SUBSTANCES := 16
+const MAX_SUBSTANCES := 32
 
 
 func setup(w: int, h: int, boundary_mask: PackedByteArray) -> void:
