@@ -82,6 +82,14 @@ jobs:
         run: |
           godot --headless --import || true
 
+      - name: Run unit tests
+        run: |
+          godot --headless --script tests/unit/run_unit_tests.gd
+
+      - name: Run integration tests
+        run: |
+          godot --headless --script tests/integration/run_integration_tests.gd
+
       - name: Export Windows Desktop (release build)
         env:
           PROJECT_NAME: ${{ env.PROJECT_NAME }}
