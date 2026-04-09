@@ -396,10 +396,33 @@ func apply_liquid_forces(
 			pressure_force_y += p_top_actual * cell_size_px
 			pressure_torque += arm_x * p_top_actual * cell_size_px
 
-			# Bottom face: reference pressure pushes UP.
-			var p_bot_ref := pressure_ref[mini(bot_cy + 1, grid_height)]
-			pressure_force_y -= p_bot_ref * cell_size_px
-			pressure_torque -= arm_x * p_bot_ref * cell_size_px
+			# Bottom face: reference pressure pushes UP — but ONLY if fluid
+			# exists nearby below the body. Without this check, the reference
+			# column provides phantom buoyancy when local water has drained.
+			# Check a small neighborhood (±3 cells horizontal, +1..+3 cells
+			# below) to avoid oscillation from the body displacing its own
+			# support in the cells directly beneath it.
+			var has_fluid_below := false
+			for check_dy in range(1, 4):
+				if has_fluid_below:
+					break
+				var check_row := bot_cy + check_dy
+				if check_row >= grid_height:
+					break
+				for check_dx in range(-3, 4):
+					var check_cx := cx + check_dx
+					if check_cx < 0 or check_cx >= grid_width:
+						continue
+					var check_idx := check_row * grid_width + check_cx
+					if check_idx < markers_size and markers[check_idx] > 0:
+						# Verify this isn't another body's cell
+						if check_idx >= mask_size or mask[check_idx] == 0:
+							has_fluid_below = true
+							break
+			if has_fluid_below:
+				var p_bot_ref := pressure_ref[mini(bot_cy + 1, grid_height)]
+				pressure_force_y -= p_bot_ref * cell_size_px
+				pressure_torque -= arm_x * p_bot_ref * cell_size_px
 
 			# Count submerged cells in this column for drag.
 			for cy in range(top_cy, bot_cy + 1):
