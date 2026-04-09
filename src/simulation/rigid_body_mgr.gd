@@ -95,10 +95,9 @@ func spawn_object(substance_id: int, screen_pos: Vector2) -> void:
 	collision.polygon = verts
 	body.add_child(collision)
 
-	var visual := Polygon2D.new()
-	visual.polygon = verts
-	visual.color = substance.base_color
-	body.add_child(visual)
+	# No Polygon2D visual — rigid bodies are rendered cell-based by
+	# inject_render_cells(), which writes their substance_id into
+	# grid.cells so they're drawn by the same renderer as everything else.
 
 	body.set_meta("substance_id", substance_id)
 	body.set_meta("substance_name", substance.substance_name)
@@ -118,6 +117,59 @@ static func _polygon_area(verts: PackedVector2Array) -> float:
 		area += verts[i].x * verts[j].y
 		area -= verts[j].x * verts[i].y
 	return absf(area) * 0.5
+
+
+func inject_render_cells(grid: ParticleGrid, grid_width: int, grid_height: int, cell_size_px: float) -> void:
+	## Write body substance_ids into grid.cells so the cell-based
+	## renderer draws rigid bodies the same as everything else. Call
+	## AFTER mediator.update() (so reactions see clean grid) and BEFORE
+	## renderer.render(). sync_from_gpu() overwrites grid.cells next
+	## frame, so this is a transient injection — no persistent state.
+	for body in _bodies:
+		if not is_instance_valid(body):
+			continue
+		var sub_id: int = body.get_meta("substance_id", 0)
+		if sub_id <= 0:
+			continue
+		var sub := SubstanceRegistry.get_substance(sub_id)
+		if not sub:
+			continue
+		var polygon: PackedVector2Array = sub.polygon
+		if polygon.size() < 3:
+			polygon = PackedVector2Array([
+				Vector2(-15, -12), Vector2(15, -12), Vector2(15, 12), Vector2(-15, 12)
+			])
+		# Transform polygon to world space.
+		var cos_r := cos(body.rotation)
+		var sin_r := sin(body.rotation)
+		var n := polygon.size()
+		var world_verts := PackedVector2Array()
+		world_verts.resize(n)
+		var min_x := INF
+		var max_x := -INF
+		var min_y := INF
+		var max_y := -INF
+		for i in range(n):
+			var v := polygon[i]
+			var wv := Vector2(
+				body.position.x + v.x * cos_r - v.y * sin_r,
+				body.position.y + v.x * sin_r + v.y * cos_r,
+			)
+			world_verts[i] = wv
+			if wv.x < min_x: min_x = wv.x
+			elif wv.x > max_x: max_x = wv.x
+			if wv.y < min_y: min_y = wv.y
+			elif wv.y > max_y: max_y = wv.y
+		var cx_min := maxi(floori(min_x / cell_size_px), 0)
+		var cx_max := mini(floori(max_x / cell_size_px), grid_width - 1)
+		var cy_min := maxi(floori(min_y / cell_size_px), 0)
+		var cy_max := mini(floori(max_y / cell_size_px), grid_height - 1)
+		for cy in range(cy_min, cy_max + 1):
+			var py := (cy + 0.5) * cell_size_px
+			for cx in range(cx_min, cx_max + 1):
+				var px := (cx + 0.5) * cell_size_px
+				if PolygonRasterizer._point_in_polygon(px, py, world_verts):
+					grid.cells[cy * grid_width + cx] = sub_id
 
 
 func get_body_count() -> int:
