@@ -305,40 +305,55 @@ func apply_liquid_forces(
 		if ref_candidates.is_empty():
 			ref_candidates.append(grid_width / 4)
 
-		var fluid_density := 0.0
+		# Find the fluid surface Y (topmost liquid row in a reference column).
+		var ref_cx := ref_candidates[0]
 		var surface_py := float(grid_height) * cell_size_px  # default: no water
+		var found_liquid := false
 
-		for ref_cx in ref_candidates:
+		for c in ref_candidates:
 			for ry in range(grid_height):
-				var ridx := ry * grid_width + ref_cx
+				var ridx := ry * grid_width + c
 				if liquid_readback.densities[ridx] > 0.15:
 					surface_py = float(ry) * cell_size_px
-					var marker: int = liquid_readback.markers[ridx]
-					if marker > 0:
-						var lsub := SubstanceRegistry.get_substance(marker)
-						if lsub:
-							fluid_density = lsub.density
+					ref_cx = c
+					found_liquid = true
 					break
-			if fluid_density > 0.0:
-				break  # found liquid at this column — done
+			if found_liquid:
+				break
 
 		# --- Count body cells below the fluid surface ---
+		# Read fluid density PER ROW from the reference column, not once
+		# for the whole body. In layered pools (water over mercury), body
+		# cells in the mercury layer use mercury's density (13.5) while
+		# cells in the water layer use water's density (1.0). Iron sinks
+		# through water but floats at the water-mercury interface.
 		var total_mass := 0.0
 		var sum_x := 0.0
 		var sum_y := 0.0
 		var submerged_cells := 0
 
-		if fluid_density > 0.0:
+		if found_liquid:
 			for cy in range(cy_min, cy_max + 1):
 				var py := (cy + 0.5) * cell_size_px
 				if py < surface_py:
 					continue  # above fluid surface — not submerged
+				# Read fluid density at THIS depth from the reference column.
+				var ref_idx := cy * grid_width + ref_cx
+				var row_density := 0.0
+				if ref_idx < liquid_readback.markers.size():
+					var marker: int = liquid_readback.markers[ref_idx]
+					if marker > 0:
+						var lsub := SubstanceRegistry.get_substance(marker)
+						if lsub:
+							row_density = lsub.density
+				if row_density <= 0.01:
+					continue  # no liquid at this depth in reference column
 				for cx in range(cx_min, cx_max + 1):
 					var px := (cx + 0.5) * cell_size_px
 					if not PolygonRasterizer._point_in_polygon(px, py, world_verts):
 						continue
 					submerged_cells += 1
-					var cell_mass := fluid_density * cell_size_px * cell_size_px
+					var cell_mass := row_density * cell_size_px * cell_size_px
 					total_mass += cell_mass
 					sum_x += px * cell_mass
 					sum_y += py * cell_mass
@@ -361,19 +376,21 @@ func apply_liquid_forces(
 		# and no overshoot/divergence from stale velocity values.
 		body.constant_force = Vector2(0, net_y)
 
+		# Average fluid density across submerged cells (for drag + debug).
+		var avg_fluid_density := total_mass / maxf(float(submerged_cells) * cell_size_px * cell_size_px, 0.01) if submerged_cells > 0 else 0.0
+
 		if debug_buoyancy and Engine.get_process_frames() % 60 == 0:
 			print("[BUOY] %s: Y=%.0f vel=%.0f sub=%d surf=%.0f dens=%.2f buoy=%.0f grav=%.0f net=%.0f mass=%.2f" % [
 				body.get_meta("substance_name", "?"),
 				body.global_position.y, body.linear_velocity.y,
-				submerged_cells, surface_py, fluid_density,
+				submerged_cells, surface_py, avg_fluid_density,
 				buoyancy_force, gravity_force, net_y, body.mass])
 
 		if submerged_cells > 0:
-			# Density-adaptive drag. For FLOATING bodies (density < fluid),
+			# Density-adaptive drag. For FLOATING bodies (density < avg fluid),
 			# scale drag with excess buoyancy to prevent surface oscillation.
-			# For SINKING bodies (density > fluid), use moderate fixed drag
-			# so dense objects sink quickly instead of being slowed to a crawl.
-			var density_ratio := sub.density / maxf(fluid_density, 0.01)
+			# For SINKING bodies (density > avg fluid), use moderate fixed drag.
+			var density_ratio := sub.density / maxf(avg_fluid_density, 0.01)
 			var buoyancy_margin: float
 			if density_ratio <= 1.0:
 				buoyancy_margin = 1.0 - density_ratio  # wood=0.35, ice=0.08, iron-in-mercury=0.42
