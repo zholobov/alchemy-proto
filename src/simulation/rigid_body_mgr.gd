@@ -119,19 +119,26 @@ static func _polygon_area(verts: PackedVector2Array) -> float:
 	return absf(area) * 0.5
 
 
-func inject_render_cells(grid: ParticleGrid) -> void:
+func inject_render_cells(grid: ParticleGrid, liquid_readback: LiquidReadback) -> void:
 	## Copy body substance_ids from _obstacle_mask_cpu into grid.cells
 	## so the cell-based renderer draws rigid bodies the same as
-	## everything else. Uses the SAME rasterized cell set as the obstacle
-	## mask (same body transforms, same frame) — no re-rasterization, no
-	## transform mismatch, no black-cell flicker.
+	## everything else. Also clears liquid_readback at body cells so the
+	## renderer doesn't blend residual water color on top of the body.
 	##
-	## Call AFTER mediator.update() and BEFORE renderer.render().
-	## sync_from_gpu() overwrites grid.cells next frame.
+	## Uses the SAME rasterized cell set as the obstacle mask (same body
+	## transforms, same frame). Call AFTER mediator and BEFORE renderer.
 	var n := mini(_obstacle_mask_cpu.size(), grid.cells.size())
 	for i in range(n):
 		if _obstacle_mask_cpu[i] > 0:
 			grid.cells[i] = _obstacle_mask_cpu[i]
+			# Clear liquid/vapor at body cells — prevents the renderer
+			# from alpha-blending stale water/vapor data on top of the
+			# body's grid color. Particles take a few frames to escape
+			# newly-occupied cells, leaving residual readback data.
+			if i < liquid_readback.markers.size():
+				liquid_readback.markers[i] = 0
+				liquid_readback.densities[i] = 0.0
+				liquid_readback.secondary_markers[i] = 0
 
 
 func get_body_count() -> int:
