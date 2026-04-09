@@ -43,6 +43,21 @@ layout(set = 0, binding = 4, std430) restrict buffer SubstanceProperties {
     vec4 data[];
 } substance_props;
 
+layout(set = 0, binding = 5, std430) restrict buffer AmbientDensity {
+    // Per-cell ambient density uploaded by Receptacle.compute_ambient_density.
+    // Heavier phase wins: a cell with water present reads as water density,
+    // a cell with only vapor reads vapor density, an empty cell reads AIR.
+    // Lets this shader do cross-phase buoyancy — vapor rising in liquid
+    // sees ambient ≈ 1.0 and gets a huge upward push.
+    float data[];
+} ambient_density;
+
+layout(set = 0, binding = 6, std430) restrict buffer Temperature {
+    // Per-cell temperature (°C) for thermal buoyancy. Hot gas becomes
+    // effectively lighter and rises via Archimedes.
+    float data[];
+} temperature;
+
 const int CELL_AIR = 0;
 const int CELL_FLUID = 1;
 const int CELL_WALL = 2;
@@ -50,10 +65,13 @@ const int CELL_WALL = 2;
 // Base gravity magnitude before buoyancy scaling. Cells/sec^2 in grid units.
 const float BASE_GRAVITY = 20.0;
 
-// Ambient density for buoyancy calculation. In our normalized scale
-// (water = 1.0), air ≈ 0.0012. A substance with density below this rises,
-// above this sinks.
+// Fallback air density if the ambient field isn't populated yet.
 const float AIR_DENSITY = 0.0012;
+
+// Thermal expansion tuning (25x exaggerated compared to real water/air so
+// convection is visually obvious over a small 200x150 grid).
+const float THERMAL_EXPANSION = 0.005;
+const float REFERENCE_TEMP = 20.0;
 
 
 int v_idx(int x, int y, int w) {
@@ -94,13 +112,44 @@ void main() {
 
     if (face_sub <= 0) return;
 
-    // Density-based buoyancy. If density is 0 or negative (uninitialized
-    // substance slot, or a substance missing the property), fall back to
-    // plain downward gravity.
+    // Density-based buoyancy using the shared ambient density field.
+    // Sample a 3x3 neighborhood average around the fluid-side cell (the
+    // one that actually contains the gas), then apply Archimedes:
+    //     a = g × (1 − ambient / density)
+    //
+    // Cross-phase behavior emerges from the Receptacle-side computation
+    // of the ambient field: a vapor cell inside a water pool sees
+    // ambient ≈ 1.0 (water), applying a huge upward force on the gas →
+    // bubble rises. A heavy gas (e.g. CO2) in air sees ambient ≈ 0.0012
+    // and density ≈ 0.002, giving a ≈ +0.4g → sinks.
+    int fluid_cell_idx = (bot_ct == CELL_FLUID) ? bot_idx : top_idx;
+    int fcx = fluid_cell_idx % w;
+    int fcy = fluid_cell_idx / w;
+    float ambient_sum = 0.0;
+    int ambient_count = 0;
+    for (int ddy = -1; ddy <= 1; ddy++) {
+        for (int ddx = -1; ddx <= 1; ddx++) {
+            int nx = fcx + ddx;
+            int ny = fcy + ddy;
+            if (nx < 0 || nx >= w || ny < 0 || ny >= h) continue;
+            ambient_sum += ambient_density.data[ny * w + nx];
+            ambient_count++;
+        }
+    }
+    float ambient = (ambient_count > 0)
+        ? (ambient_sum / float(ambient_count))
+        : AIR_DENSITY;
+
+    // Apply thermal modulation to the gas's density: hot gas is lighter.
     float density = substance_props.data[face_sub].z;
+    float cell_temp = temperature.data[fluid_cell_idx];
+    float thermal_factor = 1.0 - THERMAL_EXPANSION * (cell_temp - REFERENCE_TEMP);
+    thermal_factor = clamp(thermal_factor, 0.1, 2.0);
+    density *= thermal_factor;
+
     float effective_g;
     if (density > 0.0) {
-        effective_g = BASE_GRAVITY * (1.0 - AIR_DENSITY / density);
+        effective_g = BASE_GRAVITY * (1.0 - ambient / density);
     } else {
         effective_g = BASE_GRAVITY;
     }

@@ -14,6 +14,8 @@ const SUBSTANCE_PATHS: Array[String] = [
 	"res://data/substances/sulfur.tres",
 	"res://data/substances/iron_ingot.tres",
 	"res://data/substances/water.tres",
+	"res://data/substances/hot_water.tres",
+	"res://data/substances/mercury.tres",
 	"res://data/substances/crystal.tres",
 	"res://data/substances/ice.tres",
 	"res://data/substances/charcoal.tres",

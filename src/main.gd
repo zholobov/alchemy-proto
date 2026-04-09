@@ -205,6 +205,18 @@ func _process(delta: float) -> void:
 	# Sync all GPU state (particles + fluid) back to CPU for mediator/rendering.
 	receptacle.sync_from_gpu()
 
+	# Compute the shared ambient density field and push it to both solvers.
+	# Used on the NEXT frame's step() for per-cell Archimedes buoyancy
+	# (inter-liquid, inter-gas, and gas-liquid cross-phase). 1-frame lag
+	# is acceptable for visual fluid behavior.
+	receptacle.compute_ambient_density()
+	receptacle.fluid_solver.upload_ambient_density(receptacle.ambient_density)
+	receptacle.vapor_sim.upload_ambient_density(receptacle.ambient_density)
+
+	# Upload temperatures for thermal buoyancy (convection). Same 1-frame lag.
+	receptacle.fluid_solver.upload_temperatures(receptacle.grid.temperatures)
+	receptacle.vapor_sim.upload_temperatures(receptacle.grid.temperatures)
+
 	# --- CPU Mediator (sparse reactions only, fields run on GPU) ---
 	perf_monitor.begin_timing("Mediator")
 	var has_substances := receptacle.grid.count_particles() > 0 or receptacle.liquid_readback.count_occupied_cells() > 0

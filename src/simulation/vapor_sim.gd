@@ -56,6 +56,8 @@ var buf_boundary: RID
 var buf_divergence: RID
 var buf_pressure: RID
 var buf_pressure_out: RID
+var buf_ambient_density: RID  # per-cell ambient density for Archimedes buoyancy
+var buf_temperature: RID  # per-cell temperature for thermal buoyancy (convection)
 
 # Shaders and pipelines
 var shader_classify: RID
@@ -241,6 +243,25 @@ func spawn(x: int, y: int, substance_id: int, density: float = 1.0) -> bool:
 	return true
 
 
+func upload_ambient_density(data: PackedFloat32Array) -> void:
+	## Receptacle calls this each frame after sync_from_gpu to push the
+	## shared ambient density field to the GPU. fluid_body_forces.glsl
+	## reads from it for per-cell Archimedes buoyancy (lets heavy gases
+	## sink and light gases rise relative to their local ambient, not a
+	## hardcoded AIR_DENSITY constant).
+	if data.size() < cell_count:
+		return
+	rd.buffer_update(buf_ambient_density, 0, cell_count * 4, data.to_byte_array())
+
+
+func upload_temperatures(data: PackedFloat32Array) -> void:
+	## Upload grid.temperatures so body_forces can apply thermal buoyancy
+	## (hot gas rises, cold gas sinks). 1-frame lag like ambient_density.
+	if data.size() < cell_count:
+		return
+	rd.buffer_update(buf_temperature, 0, cell_count * 4, data.to_byte_array())
+
+
 func upload_substance_properties() -> void:
 	## Populate buf_substance_props from SubstanceRegistry. Layout matches
 	## ParticleFluidSolver — vec4 per substance: (viscosity, flip_ratio,
@@ -366,6 +387,8 @@ func cleanup() -> void:
 	rd.free_rid(buf_divergence)
 	rd.free_rid(buf_pressure)
 	rd.free_rid(buf_pressure_out)
+	rd.free_rid(buf_ambient_density)
+	rd.free_rid(buf_temperature)
 
 	rd.free()
 
@@ -436,6 +459,18 @@ func _create_buffers(boundary_mask: PackedByteArray) -> void:
 	sub_props_zeros.resize(MAX_SUBSTANCES * SUBSTANCE_PROPS_STRIDE)
 	buf_substance_props = rd.storage_buffer_create(MAX_SUBSTANCES * SUBSTANCE_PROPS_STRIDE, sub_props_zeros)
 
+	# Shared ambient density field (float per cell). Host uploads each
+	# frame via upload_ambient_density() from Receptacle.
+	var ambient_zeros := PackedFloat32Array()
+	ambient_zeros.resize(cell_count)
+	buf_ambient_density = rd.storage_buffer_create(cell_count * 4, ambient_zeros.to_byte_array())
+
+	# Temperature buffer for thermal buoyancy (hot gas rises).
+	var temp_init := PackedFloat32Array()
+	temp_init.resize(cell_count)
+	temp_init.fill(20.0)
+	buf_temperature = rd.storage_buffer_create(cell_count * 4, temp_init.to_byte_array())
+
 
 func _compile_shaders() -> void:
 	shader_classify = _load_shader("res://src/shaders/fluid_classify.glsl")
@@ -476,6 +511,8 @@ func _create_pipelines() -> void:
 		[2, buf_v_vel],
 		[3, buf_substance],
 		[4, buf_substance_props],
+		[5, buf_ambient_density],
+		[6, buf_temperature],
 	])
 
 	pipeline_divergence = rd.compute_pipeline_create(shader_divergence)

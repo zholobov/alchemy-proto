@@ -1,0 +1,30 @@
+[gd_resource type="Resource" script_class="SubstanceDef" load_steps=2 format=3]
+
+[ext_resource type="Script" path="res://src/substance/substance_def.gd" id="1"]
+
+[resource]
+script = ExtResource("1")
+substance_name = "Hot Water"
+phase = 2
+density = 0.95
+viscosity = 0.25
+flip_ratio = 0.95
+melting_point = 0.0
+boiling_point = 100.0
+flash_point = -1.0
+conductivity_thermal = 0.6
+flammability = 0.0
+burn_rate = 0.0
+energy_density = 0.0
+burn_products = []
+acidity = 7.0
+oxidizer_strength = 0.0
+reducer_strength = 0.0
+volatility = 0.4
+conductivity_electric = 0.4
+magnetic_permeability = 0.0
+base_color = Color(0.55, 0.3, 0.6, 0.75)
+opacity = 0.75
+luminosity = 0.0
+luminosity_color = Color(1, 1, 1, 1)
+glow_intensity = 0.0

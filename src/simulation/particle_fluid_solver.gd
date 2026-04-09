@@ -76,6 +76,8 @@ var buf_substance: RID
 var buf_substance2: RID  # C1: secondary substance per cell for mixing visualization
 var buf_substance_props: RID  # per-substance properties (viscosity, ...) indexed by id
 var buf_kill_mask: RID  # mediator sets cells to 1 to destroy liquid particles there
+var buf_ambient_density: RID  # per-cell ambient density for Archimedes buoyancy in advect
+var buf_temperature: RID  # per-cell temperature for thermal buoyancy (convection)
 var buf_cell_type: RID
 var buf_divergence: RID
 var buf_pressure: RID
@@ -350,6 +352,25 @@ func clear() -> void:
 	_kill_mask_dirty = false
 
 
+func upload_ambient_density(data: PackedFloat32Array) -> void:
+	## Called by Receptacle each frame after sync_from_gpu. Copies the
+	## host-computed ambient density field to the GPU for the advect
+	## shader to sample. Size must equal cell_count; caller is responsible
+	## for that invariant.
+	if data.size() < cell_count:
+		return
+	rd.buffer_update(buf_ambient_density, 0, cell_count * 4, data.to_byte_array())
+
+
+func upload_temperatures(data: PackedFloat32Array) -> void:
+	## Upload grid.temperatures to the GPU for thermal buoyancy. advect
+	## samples per-cell temperature to modulate self_density (hot fluid
+	## becomes effectively lighter and rises via Archimedes).
+	if data.size() < cell_count:
+		return
+	rd.buffer_update(buf_temperature, 0, cell_count * 4, data.to_byte_array())
+
+
 func upload_substance_properties() -> void:
 	## Populate the substance properties buffer from SubstanceRegistry.
 	## Layout: vec4 per substance — .x = viscosity, .y = flip_ratio,
@@ -419,7 +440,7 @@ func cleanup() -> void:
 			  buf_u_weights, buf_v_weights, buf_u_old, buf_v_old, buf_u_temp, buf_v_temp,
 			  buf_density_count, buf_density_float, buf_substance, buf_substance2,
 			  buf_substance_props, buf_cell_type, buf_divergence, buf_pressure, buf_pressure_out,
-			  buf_kill_mask]:
+			  buf_kill_mask, buf_ambient_density, buf_temperature]:
 		if b.is_valid():
 			rd.free_rid(b)
 
@@ -480,6 +501,20 @@ func _create_buffers(boundary_mask: PackedByteArray) -> void:
 	buf_substance2 = rd.storage_buffer_create(cell_count * 4, cell_zeros_i.to_byte_array())
 	buf_cell_type = rd.storage_buffer_create(cell_count * 4, cell_zeros_i.to_byte_array())
 	buf_kill_mask = rd.storage_buffer_create(cell_count * 4, cell_zeros_i.to_byte_array())
+
+	# Ambient density buffer (float per cell). Host uploads each frame via
+	# upload_ambient_density(). Initialized to near-zero; the first real
+	# upload happens on the first sync_from_gpu → compute_ambient_density.
+	var ambient_zeros := PackedFloat32Array()
+	ambient_zeros.resize(cell_count)
+	buf_ambient_density = rd.storage_buffer_create(cell_count * 4, ambient_zeros.to_byte_array())
+
+	# Temperature buffer (float per cell, °C). Host uploads grid.temperatures
+	# each frame. Used by advect for thermal buoyancy — hot fluid rises.
+	var temp_init := PackedFloat32Array()
+	temp_init.resize(cell_count)
+	temp_init.fill(20.0)  # room temp
+	buf_temperature = rd.storage_buffer_create(cell_count * 4, temp_init.to_byte_array())
 
 	# Preallocate the CPU kill-mask staging array so mark_cell_for_kill()
 	# doesn't reallocate on first hit.
@@ -599,6 +634,8 @@ func _create_pipelines() -> void:
 		[2, buf_boundary],
 		[3, buf_substance_props],
 		[4, buf_density_float],
+		[5, buf_ambient_density],
+		[6, buf_temperature],
 	])
 
 	# classify (reuses fluid_classify.glsl)

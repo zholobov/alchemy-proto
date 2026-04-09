@@ -40,8 +40,30 @@ layout(set = 0, binding = 4, std430) restrict buffer DensityField {
     float data[];  // normalized: 1.0 = PARTICLES_PER_CELL particles in this cell
 } density_field;
 
+layout(set = 0, binding = 5, std430) restrict buffer AmbientDensity {
+    // Per-cell ambient density in the same normalized scale as SubstanceDef
+    // (water = 1.0, air = 0.0012). Receptacle computes this each frame from
+    // liquid_readback and vapor_sim markers, uploads via upload_ambient_density.
+    // The advect shader samples a 3x3 neighborhood to compute local ambient
+    // for Archimedes buoyancy.
+    float data[];
+} ambient_density;
+
+layout(set = 0, binding = 6, std430) restrict buffer Temperature {
+    // Per-cell temperature in °C. Uploaded each frame from grid.temperatures.
+    // Used for thermal buoyancy — hot fluid has effectively lower density.
+    float data[];
+} temperature;
+
 const float GRAVITY = 60.0;        // cells per second^2 (Tier 1 tuning)
 const float MAX_VELOCITY = 100.0;  // CFL: at 120 FPS, max move = 100/120 = 0.83 cells
+const float AIR_DENSITY = 0.0012;  // normalized air density (water = 1.0)
+
+// Thermal expansion coefficient. Real water is ~0.0002/°C; we use 0.005
+// (25x exaggerated) so convection is visually obvious. At 80°C above
+// reference the density drops by 40%, causing noticeable rising.
+const float THERMAL_EXPANSION = 0.005;
+const float REFERENCE_TEMP = 20.0;
 
 // Per-substance drag (linear velocity damping). drag = visc * DRAG_SCALE.
 // Two conditions must be met for drag to apply:
@@ -72,8 +94,56 @@ void main() {
     int w = params.grid_width;
     int h = params.grid_height;
 
-    // Apply gravity (only y component, downward in screen coords).
-    p.vel.y += GRAVITY * params.delta_time;
+    // Archimedes buoyancy body force. Sample the shared ambient density
+    // field over a 3x3 neighborhood around this particle's current cell,
+    // then compute effective_g = g × (1 − ambient / self). Rising (negative)
+    // acceleration is capped at −3g to prevent extreme accelerations from
+    // huge density ratios (e.g. gas bubbles in water would otherwise give
+    // thousands of g's in one step).
+    int cx = clamp(int(floor(p.pos.x)), 0, w - 1);
+    int cy = clamp(int(floor(p.pos.y)), 0, h - 1);
+    float ambient_sum = 0.0;
+    int ambient_count = 0;
+    for (int ddy = -1; ddy <= 1; ddy++) {
+        for (int ddx = -1; ddx <= 1; ddx++) {
+            int nx = cx + ddx;
+            int ny = cy + ddy;
+            if (nx < 0 || nx >= w || ny < 0 || ny >= h) continue;
+            ambient_sum += ambient_density.data[ny * w + nx];
+            ambient_count++;
+        }
+    }
+    float ambient = (ambient_count > 0)
+        ? (ambient_sum / float(ambient_count))
+        : AIR_DENSITY;
+
+    // Base density from substance table, then modulate by cell temperature
+    // for thermal buoyancy. Hot fluid becomes effectively lighter — a hot
+    // water parcel surrounded by cold water will rise via Archimedes.
+    float self_density = substance_props.data[p.substance_id].z;
+    float cell_temp = temperature.data[cy * w + cx];
+    float thermal_factor = 1.0 - THERMAL_EXPANSION * (cell_temp - REFERENCE_TEMP);
+    thermal_factor = clamp(thermal_factor, 0.1, 2.0);
+    self_density *= thermal_factor;
+
+    float effective_g = GRAVITY;
+    if (self_density > 0.0001) {
+        effective_g = GRAVITY * (1.0 - ambient / self_density);
+    }
+    // Clamp extreme rises. Gas-in-water gives -1666g; clamped to -3g still
+    // looks dramatic visually without blowing the integration step.
+    effective_g = max(effective_g, -3.0 * GRAVITY);
+    // Homogeneous-column floor: pure Archimedes gives zero force when
+    // ambient == self, and our pressure solver isn't density-aware enough
+    // to hold a pool up via pressure alone. Apply a small minimum downward
+    // force only when ambient is within ±5% of self (same-substance column).
+    // Oil-in-water, gas-in-liquid, etc. all have ratios outside this range
+    // and get full Archimedes rising, not the floor.
+    float density_ratio = ambient / max(self_density, 0.0001);
+    if (density_ratio >= 0.95 && density_ratio <= 1.05) {
+        effective_g = max(effective_g, 0.2 * GRAVITY);
+    }
+    p.vel.y += effective_g * params.delta_time;
 
     // Density-and-speed-conditional drag. Drag only applies if the particle
     // is in a dense region AND moving slowly (settled in a pool). A falling

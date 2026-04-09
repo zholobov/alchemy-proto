@@ -20,9 +20,18 @@ var liquid_readback: LiquidReadback
 ## Grid MAC simulator for gases, fog, and steam. Stepped each frame by
 ## main._process(). Read by renderers for the vapor overlay.
 var vapor_sim: VaporSim
+## Per-cell ambient density in normalized units (water = 1.0). Computed each
+## frame from liquid_readback + vapor_sim by _compute_ambient_density() and
+## uploaded to both solvers so their body-force / advect shaders can do
+## Archimedes buoyancy. Lives on CPU; both solvers keep their own GPU copy.
+var ambient_density: PackedFloat32Array
 var rigid_body_mgr: RigidBodyMgr
 var gpu_sim: GpuSimulation
 var fluid_solver: ParticleFluidSolver
+
+## Air density in our normalized scale (water = 1.0). Used as the fallback
+## ambient for cells with no liquid or vapor present.
+const AIR_DENSITY := 0.0012
 
 ## Canonical oval parameters in pixel space — single source of truth.
 ## All three systems (grid boundary, collision, drawing) derive from these.
@@ -64,6 +73,13 @@ func _ready() -> void:
 
 	# CPU-side mirror of the liquid solver state, rebuilt each frame.
 	liquid_readback = LiquidReadback.new(GRID_WIDTH, GRID_HEIGHT)
+
+	# Shared ambient density buffer for inter-phase buoyancy. Initialised
+	# to AIR_DENSITY everywhere so the first frame of any sim starts with
+	# a valid (non-zero) field.
+	ambient_density = PackedFloat32Array()
+	ambient_density.resize(GRID_WIDTH * GRID_HEIGHT)
+	ambient_density.fill(AIR_DENSITY)
 
 	# GPU grid MAC simulator for vapor/fog/steam. Shares the oval boundary
 	# so gases respect the container walls. Repurposed from the earlier
@@ -192,6 +208,51 @@ func sync_from_gpu() -> void:
 				markers[i] = 0
 				densities[i] = 0.0
 				secondary_markers[i] = 0
+
+
+func compute_ambient_density() -> void:
+	## Walk every cell and compute the ambient density from the heaviest phase
+	## present: liquid first (via liquid_readback.markers), then vapor (via
+	## vapor_sim.markers), falling back to AIR_DENSITY. The resulting field is
+	## uploaded to both solvers so their Archimedes-based body forces know
+	## what each particle/cell is "surrounded by" — enabling gas bubbles to
+	## rise in liquid, oil to rise in water, mercury to sink through water,
+	## etc. See the inter-phase buoyancy plan for the full physics rationale.
+	##
+	## Sampled from LAST frame's readback (sync_from_gpu ran before this),
+	## so there's a 1-frame lag between state change and buoyancy response.
+	## Invisible at 60 FPS.
+	var cell_count: int = GRID_WIDTH * GRID_HEIGHT
+	var liquid_markers: PackedInt32Array = liquid_readback.markers if liquid_readback else PackedInt32Array()
+	var vapor_markers: PackedInt32Array = vapor_sim.markers if vapor_sim else PackedInt32Array()
+	var liquid_densities: PackedFloat32Array = liquid_readback.densities if liquid_readback else PackedFloat32Array()
+
+	for i in range(cell_count):
+		var max_density := AIR_DENSITY
+
+		# Liquid contribution, weighted by the normalized density readback so
+		# a sparse liquid cell doesn't pretend to be a full water column.
+		if i < liquid_markers.size():
+			var lid: int = liquid_markers[i]
+			if lid > 0:
+				var sub := SubstanceRegistry.get_substance(lid)
+				if sub:
+					var fill: float = clampf(liquid_densities[i] if i < liquid_densities.size() else 1.0, 0.0, 1.0)
+					var lrho := sub.density * fill + AIR_DENSITY * (1.0 - fill)
+					if lrho > max_density:
+						max_density = lrho
+
+		# Vapor contribution. VaporSim uses integer markers (no fractional
+		# density field), so a cell with any vapor is treated as having that
+		# substance's full density.
+		if i < vapor_markers.size():
+			var vid: int = vapor_markers[i]
+			if vid > 0:
+				var sub := SubstanceRegistry.get_substance(vid)
+				if sub and sub.density > max_density:
+					max_density = sub.density
+
+		ambient_density[i] = max_density
 
 
 func _exit_tree() -> void:
