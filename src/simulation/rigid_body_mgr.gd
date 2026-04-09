@@ -28,7 +28,19 @@ const MAX_BUOYANCY_FACTOR: float = 8.0
 ## critical damping requires c ≈ 2√(k·m) ≈ 75 for a wood block.
 ## Effective c = DRAG_COEF × submerged_cells × MASS_SCALE ≈ 150×45×0.01 = 67.
 ## Slightly underdamped → body settles with ≤1 gentle overshoot.
-const DRAG_COEF: float = 300.0
+## Reduced from 300 to 60 so marginally buoyant objects (ice, density
+## 0.92 = 8% excess) rise at visible speed. Terminal velocities:
+##   Ice:  85.7 / 4.1 = 21 px/s (reaches surface in ~10s)
+##   Wood: 343  / 5.5 = 62 px/s (reaches surface in ~1s)
+## Wood oscillation is now controlled by torque smoothing + angular
+## damping, not by extreme linear drag.
+const DRAG_COEF: float = 60.0
+
+## Drag scales up with buoyancy margin: |1 - ρ_body/ρ_fluid|.
+## Wood (margin 0.35): damp_scale = 1 + 0.35×10 = 4.5 → effective high
+## Ice  (margin 0.08): damp_scale = 1 + 0.08×10 = 1.8 → effective low
+## This lets ice rise visibly while wood settles without bouncing.
+const DRAG_BUOYANCY_SCALE: float = 10.0
 
 ## Torque from asymmetric submersion is scaled down by this factor.
 ## Raw torque is very strong (offset_px × net_force); 0.02 makes it a
@@ -352,13 +364,15 @@ func apply_liquid_forces(
 				buoyancy_force, gravity_force, net_y, body.mass])
 
 		if submerged_cells > 0:
-			# linear_damp in Godot = velocity decay fraction per second.
-			# At damp=30, velocity halves in ~0.023s (≈1.4 frames). Strong
-			# but stable because Godot integrates it within the step.
-			body.linear_damp = DRAG_COEF * float(submerged_cells) * MASS_SCALE / maxf(body.mass, 0.01)
-			# Angular damping prevents rotational oscillation from the
-			# restoring torque. Same scaling as linear damp.
-			body.angular_damp = DRAG_COEF * float(submerged_cells) * MASS_SCALE / maxf(body.mass, 0.01)
+			# Density-adaptive drag: strongly buoyant bodies (wood, 35%
+			# excess) get more damping to prevent surface oscillation;
+			# marginally buoyant bodies (ice, 8%) get less so they can
+			# visibly rise. buoyancy_margin = |1 - ρ_body/ρ_fluid|.
+			var buoyancy_margin := absf(1.0 - sub.density / maxf(fluid_density, 0.01))
+			var damp_scale := 1.0 + buoyancy_margin * DRAG_BUOYANCY_SCALE
+			var effective_damp := DRAG_COEF * damp_scale * float(submerged_cells) * MASS_SCALE / maxf(body.mass, 0.01)
+			body.linear_damp = effective_damp
+			body.angular_damp = effective_damp
 		else:
 			body.linear_damp = 0.5
 			body.angular_damp = 0.5
