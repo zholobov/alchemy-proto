@@ -315,8 +315,8 @@ func _on_substance_pouring(substance_id: int, pos: Vector2) -> void:
 				if dx * dx + dy * dy > radius * radius:
 					continue
 				for i in range(8):
-					var jx := randf() * 0.8 + 0.1
-					var jy := randf() * 0.8 + 0.1
+					var jx := SubstanceRegistry.sim_rng.randf() * 0.8 + 0.1
+					var jy := SubstanceRegistry.sim_rng.randf() * 0.8 + 0.1
 					particle_positions.append(Vector2(gx + dx + jx, gy + dy + jy))
 		receptacle.fluid_solver.spawn_particles_batch(particle_positions, substance_id)
 	else:
@@ -366,8 +366,8 @@ func _flood_fill() -> void:
 		var particle_positions: Array[Vector2] = []
 		for p in positions:
 			for i in range(8):
-				var jx := randf() * 0.8 + 0.1
-				var jy := randf() * 0.8 + 0.1
+				var jx := SubstanceRegistry.sim_rng.randf() * 0.8 + 0.1
+				var jy := SubstanceRegistry.sim_rng.randf() * 0.8 + 0.1
 				particle_positions.append(Vector2(float(p.x) + jx, float(p.y) + jy))
 		receptacle.fluid_solver.spawn_particles_batch(particle_positions, _selected_substance_id)
 	else:
@@ -381,7 +381,7 @@ func _on_containment_failure() -> void:
 	for y in range(grid.height):
 		for x in range(grid.width):
 			if grid.get_cell(x, y) > 0:
-				if randf() < 0.7:
+				if SubstanceRegistry.sim_rng.randf() < 0.7:
 					grid.clear_cell(x, y)
 	receptacle.liquid_readback.clear()
 	receptacle.vapor_sim.clear_all()
@@ -408,8 +408,8 @@ func _scenario_center_blob() -> void:
 			if dx * dx + dy * dy > 36:
 				continue
 			for ii in range(8):
-				var jx := randf() * 0.8 + 0.1
-				var jy := randf() * 0.8 + 0.1
+				var jx := SubstanceRegistry.sim_rng.randf() * 0.8 + 0.1
+				var jy := SubstanceRegistry.sim_rng.randf() * 0.8 + 0.1
 				positions.append(Vector2(cx + dx + jx, cy + dy + jy))
 	receptacle.fluid_solver.spawn_particles_batch(positions, water_id)
 	game_log.log_event("Center blob scenario (%d particles)" % positions.size(), Color.CYAN)
@@ -427,8 +427,8 @@ func _scenario_top_stream() -> void:
 	for dy in range(0, 8):
 		for dx in range(-2, 3):
 			for ii in range(8):
-				var jx := randf() * 0.8 + 0.1
-				var jy := randf() * 0.8 + 0.1
+				var jx := SubstanceRegistry.sim_rng.randf() * 0.8 + 0.1
+				var jy := SubstanceRegistry.sim_rng.randf() * 0.8 + 0.1
 				positions.append(Vector2(cx + dx + jx, cy + dy + jy))
 	receptacle.fluid_solver.spawn_particles_batch(positions, water_id)
 	game_log.log_event("Top stream scenario (%d particles)" % positions.size(), Color.CYAN)
@@ -445,8 +445,8 @@ func _scenario_column() -> void:
 	for y in range(5, 60):
 		for dx in range(-2, 3):
 			for ii in range(8):
-				var jx := randf() * 0.8 + 0.1
-				var jy := randf() * 0.8 + 0.1
+				var jx := SubstanceRegistry.sim_rng.randf() * 0.8 + 0.1
+				var jy := SubstanceRegistry.sim_rng.randf() * 0.8 + 0.1
 				positions.append(Vector2(cx + dx + jx, y + jy))
 	receptacle.fluid_solver.spawn_particles_batch(positions, water_id)
 	game_log.log_event("Column scenario (%d particles)" % positions.size(), Color.CYAN)
@@ -488,8 +488,8 @@ func _scenario_buoyancy_test() -> void:
 		for x in range(5, Receptacle.GRID_WIDTH - 5):
 			for i in range(8):
 				positions.append(Vector2(
-					x + randf() * 0.8 + 0.1,
-					y + randf() * 0.8 + 0.1,
+					x + SubstanceRegistry.sim_rng.randf() * 0.8 + 0.1,
+					y + SubstanceRegistry.sim_rng.randf() * 0.8 + 0.1,
 				))
 	receptacle.fluid_solver.spawn_particles_batch(positions, water_id)
 	game_log.log_event("Buoyancy test: %d water particles spawned" % positions.size(), Color.CYAN)

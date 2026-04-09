@@ -38,8 +38,14 @@ var groups_margolus_y: int
 var _cells_readback: PackedInt32Array
 var _temps_readback: PackedFloat32Array
 
-# Frame counter
+# Frame counter (incremented per sim step, not per render frame)
 var _frame_count: int = 0
+
+## Fixed timestep for deterministic particle grid simulation.
+const GRID_TARGET_DT := 0.016  # ~60 Hz internal step
+const GRID_MAX_FRAME_DT := 0.05
+const GRID_MAX_SUBSTEPS := 3
+var _grid_accumulator: float = 0.0
 
 # Substance table constants
 const SUBSTANCE_STRIDE := 12
@@ -237,16 +243,27 @@ func _create_fields_pipeline() -> void:
 
 
 func step(delta: float) -> void:
-	## Run one simulation frame on the GPU. Margolus passes need separate
-	## param updates (pass_idx), but we batch Margolus pass 1 + fields
-	## into one compute list to reduce sync stalls (3→2).
+	## Accumulator-based stepping: always use GRID_TARGET_DT so particle
+	## grid behavior is identical regardless of render FPS.
+	_grid_accumulator += clampf(delta, 0.0, GRID_MAX_FRAME_DT)
+	var steps_done := 0
+	while _grid_accumulator >= GRID_TARGET_DT and steps_done < GRID_MAX_SUBSTEPS:
+		_single_grid_step(GRID_TARGET_DT)
+		_grid_accumulator -= GRID_TARGET_DT
+		steps_done += 1
+	_readback()
 
-	# Margolus pass 0 (standalone — needs its own params)
+
+func _single_grid_step(dt: float) -> void:
+	## One simulation step at fixed dt. Margolus passes need separate
+	## param updates (pass_idx), batched with fields for efficiency.
+
+	# Margolus pass 0
 	var bytes := PackedByteArray()
 	bytes.resize(16)
 	bytes.encode_s32(0, width)
 	bytes.encode_s32(4, height)
-	bytes.encode_float(8, delta)
+	bytes.encode_float(8, dt)
 	bytes.encode_s32(12, _frame_count * 2)
 	rd.buffer_update(buf_params, 0, 16, bytes)
 	var cl := rd.compute_list_begin()
@@ -257,7 +274,7 @@ func step(delta: float) -> void:
 	rd.submit()
 	rd.sync()
 
-	# Margolus pass 1 + fields (batched — 2 dispatches, 1 sync)
+	# Margolus pass 1 + fields (batched)
 	bytes.encode_s32(12, _frame_count * 2 + 1)
 	rd.buffer_update(buf_params, 0, 16, bytes)
 	cl = rd.compute_list_begin()
@@ -272,12 +289,11 @@ func step(delta: float) -> void:
 	rd.submit()
 	rd.sync()
 
-	# Swap temperature ping-pong: copy output back to input
+	# Swap temperature ping-pong
 	var temp_out_data := rd.buffer_get_data(buf_temps_out)
 	rd.buffer_update(buf_temperatures, 0, cell_count * 4, temp_out_data)
 
 	_frame_count += 1
-	_readback()
 
 
 func _readback() -> void:

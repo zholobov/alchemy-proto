@@ -346,8 +346,8 @@ func _spawn_reaction_product(sub: SubstanceDef, id: int, x: int, y: int) -> void
 			if particle_fluid_solver:
 				var positions: Array[Vector2] = []
 				for j in range(8):
-					var jx := randf() * 0.8 + 0.1
-					var jy := randf() * 0.8 + 0.1
+					var jx := SubstanceRegistry.sim_rng.randf() * 0.8 + 0.1
+					var jy := SubstanceRegistry.sim_rng.randf() * 0.8 + 0.1
 					positions.append(Vector2(float(x) + jx, float(y) + jy))
 				particle_fluid_solver.spawn_particles_batch(positions, id)
 		SubstanceDef.Phase.GAS:

@@ -12,10 +12,14 @@ var charges: PackedFloat32Array  ## Per-cell electrical charge.
 ## Boundary mask: 1 = inside receptacle, 0 = wall/outside.
 var boundary: PackedByteArray
 
-var _rng := RandomNumberGenerator.new()
+## Use the shared seeded RNG for deterministic simulation.
+## SubstanceRegistry.sim_rng is seeded at startup; particle_grid
+## accesses it via this alias for convenience.
+var _rng: RandomNumberGenerator
 
 
 func _init(w: int, h: int) -> void:
+	_rng = SubstanceRegistry.sim_rng
 	width = w
 	height = h
 	var size := w * h

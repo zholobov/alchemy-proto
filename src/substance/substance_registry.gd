@@ -1,6 +1,10 @@
 extends Node
 ## Loads and indexes all substance definitions at startup.
 ## Autoloaded as SubstanceRegistry.
+##
+## Also provides a seeded RNG for deterministic simulation. ALL code
+## that affects simulation state MUST use SubstanceRegistry.sim_rng
+## instead of global randf(). The seed can be recorded for replay.
 
 ## Hardcoded list of substance resource paths in the order they appear in the
 ## shelf. We cannot use DirAccess to scan res://data/substances/ at runtime
@@ -30,8 +34,16 @@ const SUBSTANCE_PATHS: Array[String] = [
 var substances: Array[SubstanceDef] = []
 var name_to_id: Dictionary = {}
 
+## Seeded RNG for deterministic simulation. Use sim_rng.randf() instead
+## of global randf() in any code that affects simulation outcomes (particle
+## jitter, reaction probability, etc.). The seed is set at startup and
+## can be overridden for replay.
+var sim_rng := RandomNumberGenerator.new()
+const DEFAULT_SIM_SEED := 42
+
 
 func _ready() -> void:
+	sim_rng.seed = DEFAULT_SIM_SEED
 	_load_substances()
 
 

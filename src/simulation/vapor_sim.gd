@@ -122,11 +122,27 @@ func setup(w: int, h: int, boundary_mask: PackedByteArray = PackedByteArray()) -
 	print("VaporSim initialized: %dx%d" % [w, h])
 
 
+## Fixed timestep for deterministic vapor simulation.
+const VAPOR_TARGET_DT := 0.016  # ~60 Hz internal step
+const VAPOR_MAX_FRAME_DT := 0.05
+const VAPOR_MAX_SUBSTEPS := 3
+var _vapor_accumulator: float = 0.0
+
+
 func update(delta: float) -> void:
-	# Clamp dt to avoid instability from scene-load spikes (first frame can have
-	# delta of several hundred ms if the scene took time to load).
-	delta = clampf(delta, 0.0, 0.033)
-	_update_params(delta)
+	# Accumulator-based stepping: always use VAPOR_TARGET_DT so vapor
+	# behavior is identical regardless of render FPS.
+	_vapor_accumulator += clampf(delta, 0.0, VAPOR_MAX_FRAME_DT)
+	var steps_done := 0
+	while _vapor_accumulator >= VAPOR_TARGET_DT and steps_done < VAPOR_MAX_SUBSTEPS:
+		_single_vapor_step(VAPOR_TARGET_DT)
+		_vapor_accumulator -= VAPOR_TARGET_DT
+		steps_done += 1
+	_readback_density()
+
+
+func _single_vapor_step(dt: float) -> void:
+	_update_params(dt)
 
 	# ALL vapor sim GPU work chained into ONE submit+sync.
 	# Pre-Jacobi: classify + body_forces + wall_zero + divergence
@@ -174,11 +190,9 @@ func update(delta: float) -> void:
 	_cl_dispatch(cl, pipeline_damping, uniform_set_damping)
 	rd.compute_list_end()
 
-	# ONE sync for entire vapor update.
+	# ONE sync for entire vapor substep.
 	rd.submit()
 	rd.sync()
-
-	_readback_density()
 
 
 func clear_all() -> void:

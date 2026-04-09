@@ -416,12 +416,12 @@ reports, sharing experiments, and automated testing.
 ### Current status (2026-04-09)
 
 - Fluid solver: accumulator-based, always uses TARGET_DT. ✓
-- Mediator: throttled by sim time, not frame count. ✓
-- Vapor sim: single-step with variable delta. ✗ (needs accumulator)
-- GPU particle grid: single-step with variable delta. ✗ (needs accumulator)
-- RNG: uses unseeded randf() everywhere. ✗ (needs seeded RNG)
-- Ambient density / buoyancy: computed once per frame, not per substep. ~
-- Replay recording: not implemented. ✗
+- Vapor sim: accumulator-based, always uses VAPOR_TARGET_DT. ✓
+- GPU particle grid: accumulator-based, always uses GRID_TARGET_DT. ✓
+- Mediator: runs every frame (optimized to <18ms). ✓
+- RNG: seeded RandomNumberGenerator (SubstanceRegistry.sim_rng). ✓
+- Ambient density / buoyancy: computed once per frame, not per substep. ~ (acceptable)
+- Replay recording: not implemented. ✗ (future)
 
 ---
 

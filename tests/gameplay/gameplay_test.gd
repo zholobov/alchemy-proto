@@ -93,8 +93,8 @@ func fill_liquid(substance_name: String, from_row: int, to_row: int) -> void:
 		for x in range(5, Receptacle.GRID_WIDTH - 5):
 			for i in range(8):
 				positions.append(Vector2(
-					x + randf() * 0.8 + 0.1,
-					y + randf() * 0.8 + 0.1,
+					x + SubstanceRegistry.sim_rng.randf() * 0.8 + 0.1,
+					y + SubstanceRegistry.sim_rng.randf() * 0.8 + 0.1,
 				))
 	_receptacle.fluid_solver.spawn_particles_batch(positions, sub_id)
 	await get_tree().process_frame

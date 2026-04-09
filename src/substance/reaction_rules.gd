@@ -70,14 +70,14 @@ static func evaluate(a: SubstanceDef, b: SubstanceDef, temp_a: float, _temp_b: f
 
 	# Rule 6: Dissolution — salt in water (simplified).
 	if a.substance_name == "Salt" and b.phase == SubstanceDef.Phase.LIQUID and b.substance_name == "Water":
-		if randf() < 0.01:  # Slow dissolution.
+		if SubstanceRegistry.sim_rng.randf() < 0.01:  # Slow dissolution.
 			result.consumed_a = true
 			result.sound_event = "dissolve"
 			return result
 
 	# Rule 7: Rusting — iron + water, very slow.
 	if a.magnetic_permeability > 0.5 and b.substance_name == "Water":
-		if randf() < 0.001:
+		if SubstanceRegistry.sim_rng.randf() < 0.001:
 			result.consumed_a = true
 			result.spawn_substance = "Salt"  # Simplified rust product.
 			return result

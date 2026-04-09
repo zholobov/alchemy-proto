@@ -68,8 +68,8 @@ static func run_test(tree: SceneTree) -> Dictionary:
 				continue
 			# 4 particles per cell (less dense than full 8, but enough for the test).
 			for _i in range(4):
-				var jx := randf() * 0.8 + 0.1
-				var jy := randf() * 0.8 + 0.1
+				var jx := SubstanceRegistry.sim_rng.randf() * 0.8 + 0.1
+				var jy := SubstanceRegistry.sim_rng.randf() * 0.8 + 0.1
 				particle_positions.append(Vector2(float(x) + jx, float(y) + jy))
 
 	fluid_solver.spawn_particles_batch(particle_positions, water_id)
