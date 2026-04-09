@@ -8,6 +8,7 @@ substance_name = "Rock"
 phase = 0
 density = 2.6
 viscosity = 1.0
+polygon = PackedVector2Array(-12, -14, 6, -16, 18, -6, 16, 10, 2, 18, -16, 14, -18, 2)
 melting_point = 1200.0
 boiling_point = 3000.0
 flash_point = -1.0

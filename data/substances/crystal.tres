@@ -8,6 +8,7 @@ substance_name = "Crystal"
 phase = 0
 density = 2.65
 viscosity = 1.0
+polygon = PackedVector2Array(0, -16, 12, 0, 0, 16, -12, 0)
 melting_point = 1713.0
 boiling_point = 2950.0
 flash_point = -1.0
