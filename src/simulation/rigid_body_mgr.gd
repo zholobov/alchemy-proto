@@ -40,7 +40,12 @@ const DRAG_COEF: float = 60.0
 ## Wood (margin 0.35): damp_scale = 1 + 0.35×10 = 4.5 → effective high
 ## Ice  (margin 0.08): damp_scale = 1 + 0.08×10 = 1.8 → effective low
 ## This lets ice rise visibly while wood settles without bouncing.
-const DRAG_BUOYANCY_SCALE: float = 10.0
+## Raised from 10 to 40 so heavy bodies in dense fluids (iron in
+## mercury: mass=35, only 28 submerged cells) get enough damping.
+## The effective damp = DRAG_COEF × (1 + margin × SCALE) × cells ×
+## MASS_SCALE / mass. Heavy-small-polygon bodies need a large SCALE
+## to compensate for the mass/area ratio.
+const DRAG_BUOYANCY_SCALE: float = 40.0
 
 ## Torque from asymmetric submersion is scaled down by this factor.
 ## Raw torque is very strong (offset_px × net_force); 0.02 makes it a
@@ -364,11 +369,16 @@ func apply_liquid_forces(
 				buoyancy_force, gravity_force, net_y, body.mass])
 
 		if submerged_cells > 0:
-			# Density-adaptive drag: strongly buoyant bodies (wood, 35%
-			# excess) get more damping to prevent surface oscillation;
-			# marginally buoyant bodies (ice, 8%) get less so they can
-			# visibly rise. buoyancy_margin = |1 - ρ_body/ρ_fluid|.
-			var buoyancy_margin := absf(1.0 - sub.density / maxf(fluid_density, 0.01))
+			# Density-adaptive drag. For FLOATING bodies (density < fluid),
+			# scale drag with excess buoyancy to prevent surface oscillation.
+			# For SINKING bodies (density > fluid), use moderate fixed drag
+			# so dense objects sink quickly instead of being slowed to a crawl.
+			var density_ratio := sub.density / maxf(fluid_density, 0.01)
+			var buoyancy_margin: float
+			if density_ratio <= 1.0:
+				buoyancy_margin = 1.0 - density_ratio  # wood=0.35, ice=0.08, iron-in-mercury=0.42
+			else:
+				buoyancy_margin = 0.2  # fixed moderate drag for sinking objects
 			var damp_scale := 1.0 + buoyancy_margin * DRAG_BUOYANCY_SCALE
 			var effective_damp := DRAG_COEF * damp_scale * float(submerged_cells) * MASS_SCALE / maxf(body.mass, 0.01)
 			body.linear_damp = effective_damp
