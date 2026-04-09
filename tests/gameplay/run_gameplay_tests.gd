@@ -20,6 +20,7 @@ const TEST_SCRIPTS: Array[String] = [
 	"res://tests/gameplay/test_iron_in_mercury.gd",
 	"res://tests/gameplay/test_iron_in_layered_pool.gd",
 	"res://tests/gameplay/test_mercury_on_wood.gd",
+	"res://tests/gameplay/test_wood_falls_without_water.gd",
 	"res://tests/gameplay/test_fps_under_load.gd",
 	"res://tests/gameplay/test_profiling.gd",
 ]
