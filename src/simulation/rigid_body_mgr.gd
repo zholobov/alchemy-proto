@@ -3,6 +3,10 @@ extends Node2D
 ## Manages solid objects (RigidBody2D) inside the receptacle.
 ## Handles creation, displacement of grid cells, and dissolution.
 
+## Converts polygon-area × density (pixel² × relative-density) into a
+## RigidBody2D mass value that feels reasonable at the simulation scale.
+const MASS_SCALE: float = 0.01
+
 var grid: ParticleGrid
 var _bodies: Array[RigidBody2D] = []
 
@@ -23,21 +27,31 @@ func spawn_object(substance_id: int, screen_pos: Vector2) -> void:
 	if not substance or substance.phase != SubstanceDef.Phase.SOLID:
 		return
 
+	# Determine polygon vertices: use substance polygon if available,
+	# otherwise fall back to the legacy 30×24 rectangle.
+	var verts: PackedVector2Array
+	if substance.polygon.size() >= 3:
+		verts = substance.polygon
+	else:
+		verts = PackedVector2Array([
+			Vector2(-15, -12),
+			Vector2( 15, -12),
+			Vector2( 15,  12),
+			Vector2(-15,  12),
+		])
+
 	var body := RigidBody2D.new()
-	body.mass = substance.density * 0.5
+	body.mass = _polygon_area(verts) * substance.density * MASS_SCALE
 	body.gravity_scale = 1.0
 	body.position = screen_pos - receptacle_position
 
-	var collision := CollisionShape2D.new()
-	var shape := RectangleShape2D.new()
-	shape.size = Vector2(30, 24)
-	collision.shape = shape
+	var collision := CollisionPolygon2D.new()
+	collision.polygon = verts
 	body.add_child(collision)
 
-	var visual := ColorRect.new()
+	var visual := Polygon2D.new()
+	visual.polygon = verts
 	visual.color = substance.base_color
-	visual.size = shape.size
-	visual.position = -shape.size / 2
 	body.add_child(visual)
 
 	body.set_meta("substance_id", substance_id)
@@ -45,6 +59,19 @@ func spawn_object(substance_id: int, screen_pos: Vector2) -> void:
 
 	add_child(body)
 	_bodies.append(body)
+
+
+static func _polygon_area(verts: PackedVector2Array) -> float:
+	## Returns the unsigned area of a simple polygon using the shoelace formula.
+	var n := verts.size()
+	if n < 3:
+		return 0.0
+	var area := 0.0
+	for i in n:
+		var j := (i + 1) % n
+		area += verts[i].x * verts[j].y
+		area -= verts[j].x * verts[i].y
+	return absf(area) * 0.5
 
 
 func get_body_count() -> int:
