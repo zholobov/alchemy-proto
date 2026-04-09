@@ -10,6 +10,11 @@ const MASS_SCALE: float = 0.01
 var grid: ParticleGrid
 var _bodies: Array[RigidBody2D] = []
 
+## Reusable obstacle mask buffer — avoids re-allocation every frame.
+var _obstacle_mask_cpu: PackedInt32Array = PackedInt32Array()
+var _mask_width: int = 0
+var _mask_height: int = 0
+
 ## Reference to receptacle for coordinate conversion.
 var receptacle_position: Vector2
 var cell_size: int
@@ -100,3 +105,41 @@ func _screen_to_grid(screen_pos: Vector2) -> Vector2i:
 	var gx: int = floori(local.x / float(cell_size))
 	var gy: int = floori(local.y / float(cell_size))
 	return Vector2i(gx, gy)
+
+
+func compute_obstacle_mask(grid_width: int, grid_height: int, cell_size_px: float) -> PackedInt32Array:
+	## Rasterize every active rigid body into a flat obstacle mask.
+	## Returns a PackedInt32Array of size grid_width * grid_height where
+	## cells inside any body's polygon are set to 1.
+	var n := grid_width * grid_height
+	if _mask_width != grid_width or _mask_height != grid_height:
+		_obstacle_mask_cpu.resize(n)
+		_mask_width = grid_width
+		_mask_height = grid_height
+	_obstacle_mask_cpu.fill(0)
+
+	for body in _bodies:
+		if not is_instance_valid(body):
+			continue
+		var sub_id: int = body.get_meta("substance_id", 0)
+		var sub := SubstanceRegistry.get_substance(sub_id)
+		if not sub:
+			continue
+		var polygon: PackedVector2Array = sub.polygon
+		if polygon.size() < 3:
+			# Fallback rectangle matching spawn_object fallback.
+			polygon = PackedVector2Array([
+				Vector2(-15, -12), Vector2(15, -12),
+				Vector2(15, 12), Vector2(-15, 12),
+			])
+		PolygonRasterizer.rasterize(
+			polygon,
+			body.position,
+			body.rotation,
+			grid_width,
+			grid_height,
+			cell_size_px,
+			_obstacle_mask_cpu,
+		)
+
+	return _obstacle_mask_cpu

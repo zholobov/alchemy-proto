@@ -192,6 +192,14 @@ func _process(delta: float) -> void:
 	receptacle.gpu_sim.step(delta)
 	perf_monitor.end_timing("GPU Sim")
 
+	# --- Rigid-body obstacle mask (blocks liquid flow) ---
+	var obstacle_mask := receptacle.rigid_body_mgr.compute_obstacle_mask(
+		Receptacle.GRID_WIDTH,
+		Receptacle.GRID_HEIGHT,
+		float(Receptacle.CELL_SIZE),
+	)
+	receptacle.fluid_solver.upload_obstacle_mask(obstacle_mask)
+
 	# --- GPU MAC Fluid (incompressible liquid simulation) ---
 	perf_monitor.begin_timing("Fluid Solver")
 	receptacle.fluid_solver.step(delta)
