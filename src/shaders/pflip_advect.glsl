@@ -94,23 +94,28 @@ void main() {
     int w = params.grid_width;
     int h = params.grid_height;
 
-    // Phase-interface buoyancy. Default behavior is full gravity — matches
-    // the pre-buoyancy sim exactly, so a uniform water blob in free fall or
-    // a water pool interior both fall at g. We only switch to Archimedes
-    // when neighbors actually have a DIFFERENT phase (density differs from
-    // self by more than PHASE_INTERFACE_THRESHOLD). In that case we use
-    // only the "different" neighbors to compute ambient, ignoring same-phase
-    // neighbors. This avoids the "3x3 average smears the interior of a
-    // falling blob to zero net force" bug from the previous formulation.
+    // Cardinal-neighbor buoyancy. Apply Archimedes only when the particle
+    // is mostly submerged in denser fluid — i.e. at least 2 out of 4
+    // cardinal neighbors (up, down, left, right) are significantly denser
+    // than self. Otherwise use plain gravity.
+    //
+    // This is stricter than "any denser neighbor" and fixes a class of
+    // bugs where a SINGLE stray denser cell above a water particle (e.g.
+    // a mercury droplet hovering above a water pool) triggered full
+    // Archimedes buoyancy and shot water upward in spurious explosions.
+    // A truly submerged object will have denser fluid on most sides; a
+    // stray droplet hovering above only produces 1 denser neighbor, so
+    // buoyancy doesn't fire and both particles just fall under gravity.
     //
     // Behavior cheatsheet:
-    //  water blob interior (all water nbrs)     → 0 external → effective_g = g
-    //  water pool interior                      → 0 external → effective_g = g
-    //  water edge next to air                   → external=air, g × (1 − 0.001) ≈ g
-    //  oil at water interface                   → external=water, g × (1 − 1/0.8) = −0.25g ↑
-    //  gas bubble in water                      → external=water, −3g clamped ↑↑↑
-    //  mercury in water                         → external=water, g × (1 − 1/13.5) ≈ 0.93g ↓
-    //  hot water parcel in cold water           → external=cold, thermal-modulated diff ↑
+    //  water pool interior                    → 0 denser nbrs → g
+    //  falling water blob                     → 0 denser nbrs → g
+    //  water with 1 stray mercury above       → 1 denser  → g ✓ no explosion
+    //  water fully surrounded by mercury      → 4 denser  → rises (−3g clamp)
+    //  gas bubble 1 cell in water             → 4 denser  → rises fast
+    //  oil droplet 1 cell in water            → 4 denser  → rises slow
+    //  mercury in water                       → 0 denser  → sinks under g
+    //  hot water parcel in cold water         → 4 denser (thermal) → rises
     const float PHASE_INTERFACE_THRESHOLD = 0.05;
 
     int cx = clamp(int(floor(p.pos.x)), 0, w - 1);
@@ -123,34 +128,54 @@ void main() {
     thermal_factor = clamp(thermal_factor, 0.1, 2.0);
     self_density *= thermal_factor;
 
-    // Scan 3x3 for cells with significantly different density.
-    float external_sum = 0.0;
-    int external_count = 0;
-    for (int ddy = -1; ddy <= 1; ddy++) {
-        for (int ddx = -1; ddx <= 1; ddx++) {
-            int nx = cx + ddx;
-            int ny = cy + ddy;
-            if (nx < 0 || nx >= w || ny < 0 || ny >= h) continue;
-            float n_density = ambient_density.data[ny * w + nx];
-            float rel_diff = abs(n_density - self_density) / max(self_density, 0.0001);
-            if (rel_diff > PHASE_INTERFACE_THRESHOLD) {
-                external_sum += n_density;
-                external_count++;
-            }
+    float buoyancy_threshold = self_density * (1.0 + PHASE_INTERFACE_THRESHOLD);
+
+    // Count cardinal neighbors whose ambient density is significantly denser
+    // than our thermal-modulated self density. Accumulate their densities so
+    // we can compute an average ambient for the Archimedes formula.
+    int denser_count = 0;
+    float denser_sum = 0.0;
+
+    if (cx - 1 >= 0) {
+        float d = ambient_density.data[cy * w + (cx - 1)];
+        if (d > buoyancy_threshold) {
+            denser_count++;
+            denser_sum += d;
+        }
+    }
+    if (cx + 1 < w) {
+        float d = ambient_density.data[cy * w + (cx + 1)];
+        if (d > buoyancy_threshold) {
+            denser_count++;
+            denser_sum += d;
+        }
+    }
+    if (cy - 1 >= 0) {
+        float d = ambient_density.data[(cy - 1) * w + cx];
+        if (d > buoyancy_threshold) {
+            denser_count++;
+            denser_sum += d;
+        }
+    }
+    if (cy + 1 < h) {
+        float d = ambient_density.data[(cy + 1) * w + cx];
+        if (d > buoyancy_threshold) {
+            denser_count++;
+            denser_sum += d;
         }
     }
 
     float effective_g = GRAVITY;
-    if (external_count > 0 && self_density > 0.0001) {
-        // At a phase interface — apply Archimedes using only the external
-        // (different-phase) neighbor cells as the ambient.
-        float ambient = external_sum / float(external_count);
+    if (denser_count >= 2 && self_density > 0.0001) {
+        // "Mostly submerged" — apply Archimedes using the denser cells as
+        // the ambient fluid we're displacing.
+        float ambient = denser_sum / float(denser_count);
         effective_g = GRAVITY * (1.0 - ambient / self_density);
-        // Clamp extreme rises. Gas-in-water gives -1666g; clamped to -3g
-        // still looks dramatic visually without blowing the integration step.
+        // Clamp extreme rises. Gas-in-water gives -1666g; -3g still looks
+        // visually dramatic without blowing the integration step.
         effective_g = max(effective_g, -3.0 * GRAVITY);
     }
-    // else: homogeneous region, use full gravity unchanged
+    // else: not enough denser cells around us — gravity only
     p.vel.y += effective_g * params.delta_time;
 
     // Density-and-speed-conditional drag. Drag only applies if the particle
