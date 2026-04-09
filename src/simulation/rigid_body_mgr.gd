@@ -10,9 +10,12 @@ extends Node2D
 ## float depth: higher → heavier bodies + stronger buoyancy (ratio stays).
 const MASS_SCALE: float = 0.01
 
-## Gravitational acceleration for buoyancy force — must match GRAVITY in
-## pflip_advect.glsl so rigid-body buoyancy balances liquid gravity.
-const BUOYANCY_G: float = 60.0
+## Gravitational acceleration for buoyancy force — must match the gravity
+## that Godot's physics engine applies to rigid bodies (default 980 px/s²).
+## NOT the fluid sim's internal GRAVITY constant (60 cells/s²) — those are
+## different unit systems. The body falls under Godot physics gravity, so
+## the buoyancy force must use the same g to balance correctly.
+var BUOYANCY_G: float = ProjectSettings.get_setting("physics/2d/default_gravity", 980.0)
 
 ## Safety cap: buoyancy force on a body is clamped to this multiple of its
 ## weight. Prevents numerical blow-up when a body overlaps many dense cells.
