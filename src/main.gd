@@ -175,6 +175,10 @@ func _input(event: InputEvent) -> void:
 			# Spawn a Steam blob in the middle of the receptacle for vapor
 			# sim debugging. Steam rises (gravity_multiplier < 0).
 			_spawn_debug_vapor()
+		elif key == KEY_B:
+			# Buoyancy debug: fill a deep water pool + drop a wood block.
+			# Replicates the automated test_buoyancy scenario exactly.
+			_scenario_buoyancy_test()
 
 
 func _process(delta: float) -> void:
@@ -461,3 +465,38 @@ func _spawn_debug_vapor() -> void:
 			if receptacle.vapor_sim.spawn(cx + dx, cy + dy, steam_id):
 				count += 1
 	game_log.log_event("Debug vapor spawn: %d cells of Steam" % count, Color.CYAN)
+
+
+func _scenario_buoyancy_test() -> void:
+	## B key: exact replica of test_buoyancy scenario — fill deep pool,
+	## drop wood block. Also enables per-frame buoyancy logging on the
+	## rigid body manager so the console shows force values.
+	_clear_receptacle()
+	var water_id := SubstanceRegistry.get_id("Water")
+	if water_id <= 0:
+		game_log.log_event("Water substance not found", Color.RED)
+		return
+	# Fill rows 50-140 — same as test_buoyancy.gd's fill_liquid call.
+	var positions: Array[Vector2] = []
+	for y in range(50, 140):
+		for x in range(5, Receptacle.GRID_WIDTH - 5):
+			for i in range(8):
+				positions.append(Vector2(
+					x + randf() * 0.8 + 0.1,
+					y + randf() * 0.8 + 0.1,
+				))
+	receptacle.fluid_solver.spawn_particles_batch(positions, water_id)
+	game_log.log_event("Buoyancy test: %d water particles spawned" % positions.size(), Color.CYAN)
+	# Enable debug logging on the rigid body manager.
+	receptacle.rigid_body_mgr.debug_buoyancy = true
+	# Drop a wood block after a short delay (let water settle).
+	get_tree().create_timer(2.0).timeout.connect(func():
+		var wood_id := SubstanceRegistry.get_id("Wood")
+		if wood_id > 0:
+			var drop_pos := receptacle.global_position + Vector2(
+				Receptacle.GRID_WIDTH * Receptacle.CELL_SIZE / 2.0 - 40,
+				30 * Receptacle.CELL_SIZE,
+			)
+			receptacle.rigid_body_mgr.spawn_object(wood_id, drop_pos)
+			game_log.log_event("Wood block dropped", Color.CYAN)
+	)

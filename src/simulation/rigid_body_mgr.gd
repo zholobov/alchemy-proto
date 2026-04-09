@@ -32,6 +32,9 @@ const DRAG_COEF: float = 300.0
 
 var grid: ParticleGrid
 var _bodies: Array[RigidBody2D] = []
+## Set to true to print per-frame buoyancy diagnostics to stdout.
+## Toggle via the B-key scenario in main.gd.
+var debug_buoyancy: bool = false
 
 ## Reusable obstacle mask buffer — avoids re-allocation every frame.
 var _obstacle_mask_cpu: PackedInt32Array = PackedInt32Array()
@@ -296,6 +299,13 @@ func apply_liquid_forces(
 		# this INSIDE the physics integrator so there's no 1-frame lag
 		# and no overshoot/divergence from stale velocity values.
 		body.constant_force = Vector2(0, net_y)
+
+		if debug_buoyancy and Engine.get_process_frames() % 30 == 0:
+			print("[BUOY] %s: Y=%.0f vel=%.0f sub=%d surf=%.0f dens=%.2f buoy=%.0f grav=%.0f net=%.0f mass=%.2f" % [
+				body.get_meta("substance_name", "?"),
+				body.global_position.y, body.linear_velocity.y,
+				submerged_cells, surface_py, fluid_density,
+				buoyancy_force, gravity_force, net_y, body.mass])
 
 		if submerged_cells > 0:
 			# linear_damp in Godot = velocity decay fraction per second.

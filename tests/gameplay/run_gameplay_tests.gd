@@ -3,7 +3,8 @@ extends Node
 ## (SubstanceRegistry) are initialized by the engine.
 ##
 ## Usage:
-##   godot --path . tests/gameplay/run_gameplay_tests.tscn
+##   godot --path . tests/gameplay/run_gameplay_tests.tscn          # run all
+##   godot --path . tests/gameplay/run_gameplay_tests.tscn -- buoyancy  # run matching
 ##
 ## A window appears briefly while the sim runs. Results print to
 ## stdout. Exits with code 0 (all pass) or 1 (any fail).
@@ -39,7 +40,18 @@ func _run_all_tests() -> void:
 	var passed := 0
 	var failures: Array[String] = []
 
+	# Filter: if a command-line arg is given after --, only run tests
+	# whose filename contains it. E.g. "-- buoyancy" runs test_buoyancy.
+	var filter := ""
+	var user_args := OS.get_cmdline_user_args()
+	if user_args.size() > 0:
+		filter = user_args[0]
+		print("Filter: '%s'\n" % filter)
+
 	for path in TEST_SCRIPTS:
+		if filter != "" and path.find(filter) == -1:
+			continue
+
 		var script := load(path) as GDScript
 		if not script:
 			failures.append("%s: failed to load" % path)
