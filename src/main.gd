@@ -217,6 +217,7 @@ func _process(delta: float) -> void:
 	receptacle.rigid_body_mgr.apply_liquid_forces(
 		receptacle.fluid_solver,
 		receptacle.liquid_readback,
+		receptacle.ambient_density,
 		Receptacle.GRID_WIDTH,
 		Receptacle.GRID_HEIGHT,
 		float(Receptacle.CELL_SIZE),

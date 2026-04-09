@@ -166,14 +166,18 @@ func compute_obstacle_mask(grid_width: int, grid_height: int, cell_size_px: floa
 func apply_liquid_forces(
 	fluid_solver,
 	liquid_readback: LiquidReadback,
+	ambient: PackedFloat32Array,
 	grid_width: int,
 	grid_height: int,
 	cell_size_px: float,
 ) -> void:
 	## Compute Archimedes buoyancy on each rigid body from displaced liquid.
-	## For every body, rasterize its polygon to find which grid cells it
-	## overlaps, accumulate displaced liquid mass, and apply an upward force
-	## at the center of buoyant mass.
+	## Body cells are WALL (obstacle mask), so liquid_readback.densities is
+	## zero inside the body. Instead, we sample the AMBIENT density of each
+	## body cell's cardinal neighbors to determine if the cell is submerged.
+	## If any neighbor has ambient > 0.01, the cell counts as submerged at
+	## the max neighbor density.
+	const SUBMERSION_THRESHOLD := 0.01
 	for body in _bodies:
 		if not is_instance_valid(body):
 			continue
@@ -232,16 +236,21 @@ func apply_liquid_forces(
 				var py := (cy + 0.5) * cell_size_px
 				if not PolygonRasterizer._point_in_polygon(px, py, world_verts):
 					continue
-				var idx := row_offset + cx
-				var fill_fraction: float = liquid_readback.densities[idx]
-				var marker: int = liquid_readback.markers[idx]
-				if fill_fraction <= 0.0 or marker <= 0:
+				# Body cells are WALL — no particles inside. Determine
+				# submersion by checking cardinal neighbors' ambient density.
+				var max_neighbor_density := 0.0
+				if cx > 0:
+					max_neighbor_density = maxf(max_neighbor_density, ambient[row_offset + cx - 1])
+				if cx < grid_width - 1:
+					max_neighbor_density = maxf(max_neighbor_density, ambient[row_offset + cx + 1])
+				if cy > 0:
+					max_neighbor_density = maxf(max_neighbor_density, ambient[(cy - 1) * grid_width + cx])
+				if cy < grid_height - 1:
+					max_neighbor_density = maxf(max_neighbor_density, ambient[(cy + 1) * grid_width + cx])
+				if max_neighbor_density <= SUBMERSION_THRESHOLD:
 					continue
 				submerged_cells += 1
-				var liquid_sub := SubstanceRegistry.get_substance(marker)
-				if not liquid_sub:
-					continue
-				var cell_mass: float = liquid_sub.density * cell_size_px * cell_size_px * fill_fraction
+				var cell_mass: float = max_neighbor_density * cell_size_px * cell_size_px
 				total_mass += cell_mass
 				sum_x += px * cell_mass
 				sum_y += py * cell_mass
