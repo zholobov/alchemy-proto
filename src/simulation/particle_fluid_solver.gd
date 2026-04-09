@@ -82,6 +82,8 @@ var buf_cell_type: RID
 var buf_divergence: RID
 var buf_pressure: RID
 var buf_pressure_out: RID
+var buf_cell_density: RID  # per-cell density (cell_mass / count) for variable-density Poisson
+var buf_cell_mass: RID     # sum of per-particle substance densities, atomic-accumulated in p2g
 
 # Shaders
 var shader_clear_grid: RID
@@ -98,6 +100,7 @@ var shader_wall_zero: RID
 var shader_divergence: RID
 var shader_jacobi: RID
 var shader_gradient: RID
+var shader_compute_cell_density: RID
 var shader_apply_kills: RID
 
 # Pipelines
@@ -115,6 +118,7 @@ var pipeline_wall_zero: RID
 var pipeline_divergence: RID
 var pipeline_jacobi: RID
 var pipeline_gradient: RID
+var pipeline_compute_cell_density: RID
 var pipeline_apply_kills: RID
 
 # Uniform sets
@@ -133,6 +137,7 @@ var uset_divergence: RID
 var uset_jacobi_ab: RID
 var uset_jacobi_ba: RID
 var uset_gradient: RID
+var uset_compute_cell_density: RID
 var uset_apply_kills: RID
 
 # CPU-side staging for the mediator's cell kill mask. Mediator calls
@@ -246,6 +251,11 @@ func _single_step(sub_delta: float) -> void:
 	# Pass 6: snapshot velocities for FLIP delta (= pressure correction only).
 	# Gravity is NOT applied here — it's applied per-particle in advect.
 	_dispatch(pipeline_save_vel, uset_save_vel, groups_grid_x, groups_grid_y)
+
+	# Pass 6b: compute per-cell density from substance[] for the variable-
+	# density Jacobi + gradient. Runs once per step, reused for all
+	# JACOBI_ITERATIONS of the pressure solve.
+	_dispatch(pipeline_compute_cell_density, uset_compute_cell_density, groups_grid_x, groups_grid_y)
 
 	# Pass 7: compute divergence
 	_dispatch(pipeline_divergence, uset_divergence, groups_grid_x, groups_grid_y)
@@ -423,7 +433,8 @@ func cleanup() -> void:
 	for p in [pipeline_clear_grid, pipeline_p2g, pipeline_normalize, pipeline_save_vel,
 			  pipeline_g2p, pipeline_advect, pipeline_classify, pipeline_density_correction,
 			  pipeline_viscosity, pipeline_extrapolate, pipeline_wall_zero,
-			  pipeline_divergence, pipeline_jacobi, pipeline_gradient, pipeline_apply_kills]:
+			  pipeline_divergence, pipeline_jacobi, pipeline_gradient,
+			  pipeline_compute_cell_density, pipeline_apply_kills]:
 		if p.is_valid():
 			rd.free_rid(p)
 
@@ -431,7 +442,8 @@ func cleanup() -> void:
 	for s in [shader_clear_grid, shader_p2g, shader_normalize, shader_save_vel,
 			  shader_g2p, shader_advect, shader_classify, shader_density_correction,
 			  shader_viscosity, shader_extrapolate, shader_wall_zero, shader_divergence,
-			  shader_jacobi, shader_gradient, shader_apply_kills]:
+			  shader_jacobi, shader_gradient, shader_compute_cell_density,
+			  shader_apply_kills]:
 		if s.is_valid():
 			rd.free_rid(s)
 
@@ -440,7 +452,7 @@ func cleanup() -> void:
 			  buf_u_weights, buf_v_weights, buf_u_old, buf_v_old, buf_u_temp, buf_v_temp,
 			  buf_density_count, buf_density_float, buf_substance, buf_substance2,
 			  buf_substance_props, buf_cell_type, buf_divergence, buf_pressure, buf_pressure_out,
-			  buf_kill_mask, buf_ambient_density, buf_temperature]:
+			  buf_cell_density, buf_cell_mass, buf_kill_mask, buf_ambient_density, buf_temperature]:
 		if b.is_valid():
 			rd.free_rid(b)
 
@@ -527,6 +539,8 @@ func _create_buffers(boundary_mask: PackedByteArray) -> void:
 	buf_divergence = rd.storage_buffer_create(cell_count * 4, cell_zeros_f.to_byte_array())
 	buf_pressure = rd.storage_buffer_create(cell_count * 4, cell_zeros_f.to_byte_array())
 	buf_pressure_out = rd.storage_buffer_create(cell_count * 4, cell_zeros_f.to_byte_array())
+	buf_cell_density = rd.storage_buffer_create(cell_count * 4, cell_zeros_f.to_byte_array())
+	buf_cell_mass = rd.storage_buffer_create(cell_count * 4, cell_zeros_f.to_byte_array())
 
 
 func _compile_shaders() -> void:
@@ -547,8 +561,14 @@ func _compile_shaders() -> void:
 	# Reused from the grid solver:
 	shader_wall_zero = _load("res://src/shaders/fluid_wall_zero.glsl")
 	shader_divergence = _load("res://src/shaders/fluid_divergence.glsl")
-	shader_jacobi = _load("res://src/shaders/fluid_jacobi.glsl")
-	shader_gradient = _load("res://src/shaders/fluid_gradient.glsl")
+	# PIC/FLIP-specific variable-density pressure projection. Solves the
+	# weighted Poisson equation ∇·((1/ρ)∇p) = ∇·u/dt so multi-substance
+	# mixes sort by density (mercury sinks through water, oil rises, etc.).
+	# VaporSim still uses the uniform-density fluid_jacobi / fluid_gradient
+	# because gases all have similar densities in our normalized scale.
+	shader_compute_cell_density = _load("res://src/shaders/pflip_compute_cell_density.glsl")
+	shader_jacobi = _load("res://src/shaders/pflip_jacobi.glsl")
+	shader_gradient = _load("res://src/shaders/pflip_gradient.glsl")
 
 
 func _load(path: String) -> RID:
@@ -575,9 +595,11 @@ func _create_pipelines() -> void:
 		[5, buf_density_count],
 		[6, buf_substance],
 		[7, buf_substance2],
+		[8, buf_cell_mass],
 	])
 
-	# p2g
+	# p2g — bindings 9/10 feed the cell_mass accumulator (substance_props
+	# gives per-particle density, which gets atomicAdd'd into cell_mass).
 	pipeline_p2g = rd.compute_pipeline_create(shader_p2g)
 	uset_p2g = _build_uset(shader_p2g, [
 		[0, buf_params],
@@ -589,6 +611,8 @@ func _create_pipelines() -> void:
 		[6, buf_density_count],
 		[7, buf_substance],
 		[8, buf_substance2],
+		[9, buf_substance_props],
+		[10, buf_cell_mass],
 	])
 
 	# normalize
@@ -710,7 +734,21 @@ func _create_pipelines() -> void:
 		[2, buf_kill_mask],
 	])
 
-	# jacobi (ping-pong)
+	# compute_cell_density — divides cell_mass by particle count to get a
+	# mass-weighted average cell density. Must run before divergence so the
+	# pressure solve has a fresh density field. Uses cell_mass/count rather
+	# than the racy substance buffer so isolated particles don't flicker the
+	# cell density between substances and jitter the pressure.
+	pipeline_compute_cell_density = rd.compute_pipeline_create(shader_compute_cell_density)
+	uset_compute_cell_density = _build_uset(shader_compute_cell_density, [
+		[0, buf_params],
+		[1, buf_cell_mass],
+		[2, buf_density_count],
+		[3, buf_cell_density],
+	])
+
+	# jacobi (ping-pong) — variable-density pflip_jacobi reads cell_density
+	# at binding 5 on top of the standard uset layout.
 	pipeline_jacobi = rd.compute_pipeline_create(shader_jacobi)
 	uset_jacobi_ab = _build_uset(shader_jacobi, [
 		[0, buf_params],
@@ -718,6 +756,7 @@ func _create_pipelines() -> void:
 		[2, buf_divergence],
 		[3, buf_pressure],
 		[4, buf_pressure_out],
+		[5, buf_cell_density],
 	])
 	uset_jacobi_ba = _build_uset(shader_jacobi, [
 		[0, buf_params],
@@ -725,9 +764,10 @@ func _create_pipelines() -> void:
 		[2, buf_divergence],
 		[3, buf_pressure_out],
 		[4, buf_pressure],
+		[5, buf_cell_density],
 	])
 
-	# gradient
+	# gradient — variable-density pflip_gradient, same binding 5 extension.
 	pipeline_gradient = rd.compute_pipeline_create(shader_gradient)
 	uset_gradient = _build_uset(shader_gradient, [
 		[0, buf_params],
@@ -735,6 +775,7 @@ func _create_pipelines() -> void:
 		[2, buf_pressure],
 		[3, buf_u_vel],
 		[4, buf_v_vel],
+		[5, buf_cell_density],
 	])
 
 

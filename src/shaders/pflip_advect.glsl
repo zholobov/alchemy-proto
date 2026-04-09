@@ -94,29 +94,71 @@ void main() {
     int w = params.grid_width;
     int h = params.grid_height;
 
-    // Cardinal-neighbor buoyancy. Apply Archimedes only when the particle
-    // is mostly submerged in denser fluid — i.e. at least 2 out of 4
-    // cardinal neighbors (up, down, left, right) are significantly denser
-    // than self. Otherwise use plain gravity.
+    // Cardinal-neighbor buoyancy. Two symmetric branches:
     //
-    // This is stricter than "any denser neighbor" and fixes a class of
-    // bugs where a SINGLE stray denser cell above a water particle (e.g.
-    // a mercury droplet hovering above a water pool) triggered full
-    // Archimedes buoyancy and shot water upward in spurious explosions.
-    // A truly submerged object will have denser fluid on most sides; a
-    // stray droplet hovering above only produces 1 denser neighbor, so
-    // buoyancy doesn't fire and both particles just fall under gravity.
+    //  RISE branch (denser_count >= 3): particle is mostly submerged in
+    //  DENSER fluid. Apply Archimedes  g·(1 − ρ_a/ρ_s)  which is negative
+    //  when ambient > self, pushing the particle upward. Gas bubbles and
+    //  single-cell oil drops rise; mostly-surrounded hot water rises.
     //
-    // Behavior cheatsheet:
-    //  water pool interior                    → 0 denser nbrs → g
-    //  falling water blob                     → 0 denser nbrs → g
-    //  water with 1 stray mercury above       → 1 denser  → g ✓ no explosion
-    //  water fully surrounded by mercury      → 4 denser  → rises (−3g clamp)
-    //  gas bubble 1 cell in water             → 4 denser  → rises fast
-    //  oil droplet 1 cell in water            → 4 denser  → rises slow
-    //  mercury in water                       → 0 denser  → sinks under g
-    //  hot water parcel in cold water         → 4 denser (thermal) → rises
+    //  SINK branch (lighter_count >= 3 and ambient is liquid-density):
+    //  particle is mostly embedded in LIGHTER liquid. This is the Rayleigh-
+    //  Taylor case (mercury in water, water in oil). The variable-density
+    //  Jacobi in pflip_jacobi.glsl would treat this as a hydrostatic
+    //  equilibrium — mathematically stable even though it's physically
+    //  unstable — so sorting would only happen from discretization noise.
+    //  We break the meta-stable equilibrium with an explicit Atwood-scaled
+    //  boost:
+    //      A = (ρ_s − ρ_a) / (ρ_s + ρ_a)       ∈ [0, 1)
+    //      effective_g = GRAVITY · (1 + k · A)
+    //  The boost is ADDITIVE to the variable-density pressure correction
+    //  that happens in the Jacobi stage. It's proportional to how "out of
+    //  sort" the local arrangement is: mercury-in-water (A=0.86) gets ~2.7x
+    //  gravity; water-in-oil (A=0.11) gets ~1.2x; hot-in-cold (A≈0.03)
+    //  barely changes. No explicit clamp needed because Atwood saturates at 1.
+    //
+    //  The `ambient >= SINK_AMBIENT_FLOOR` guard stops the boost from
+    //  applying when the "lighter" surround is air — we don't want water at
+    //  the pool surface to gain 2-3x gravity just because the air above
+    //  counts as "lighter".
+    //
+    // The 3/4 requirement (MIN_DENSER_NEIGHBORS) is stricter than 2/4: with
+    // 2/4, mixed pools (water with mercury on 2 sides during pouring) would
+    // trigger spurious buoyancy and produce oscillations. 3/4 means only
+    // particles that are actually "mostly submerged" react.
+    //
+    // Trade-off: 2×2+ droplets of a less-dense substance don't rise as
+    // cohesive blobs — each cell has only 2 "different phase" cardinal
+    // neighbors, below the threshold. Only single-cell or 1-wide-strip
+    // droplets rise from the RISE branch. (The SINK branch doesn't have
+    // this limitation in the same way because even a 2×2 mercury blob in
+    // water has 2+ water cardinals per cell on the edges.)
+    //
+    // Behavior cheatsheet (d = denser_count, l = lighter_count):
+    //  water pool interior                    → d=0 l=0 → g
+    //  falling water blob in air              → d=0 l=0..4 (air ambient < floor) → g
+    //  water at the pool surface (air above)  → d=0 l=1 air (floor guard) → g
+    //  water with 1 stray mercury above       → d=1 l=0 → g  ✓ no explosion
+    //  water with 2 mercury neighbors (mix)   → d=2 l=0 → g  ✓ no oscillation
+    //  water fully surrounded by mercury      → d=4 → rise (−3g clamp)
+    //  gas bubble 1 cell in water             → d=4 → rise fast
+    //  oil droplet 1 cell in water            → d=4 → rise slow
+    //  mercury 1 cell in water                → l=4 → SINK boost (~2.7g)
+    //  mercury at edge of settled blob        → l=3 l=2 → SINK boost
+    //  mercury deep in mercury pool           → d=0 l=0..1 → g (pool drag applies)
+    //  single hot water cell in cold water    → d=4 (thermal) → rise
+    //  cold water cell in hot water           → l=4 (thermal) → SINK boost
     const float PHASE_INTERFACE_THRESHOLD = 0.05;
+    const int MIN_DENSER_NEIGHBORS = 3;
+    // Atwood-scaled sink boost — see comment above. k=2 means mercury-in-
+    // water boost is 1 + 2·0.862 = 2.72x gravity. Tune this to make sorting
+    // faster or slower; lower values feel more physical, higher values feel
+    // more responsive.
+    const float SINK_BOOST_K = 2.0;
+    // Ambient density floor for the SINK branch — anything lighter than
+    // this is treated as "not a liquid" and doesn't contribute. 0.1 sits
+    // well above air (0.0012) and below every substance defined today.
+    const float SINK_AMBIENT_FLOOR = 0.1;
 
     int cx = clamp(int(floor(p.pos.x)), 0, w - 1);
     int cy = clamp(int(floor(p.pos.y)), 0, h - 1);
@@ -128,54 +170,80 @@ void main() {
     thermal_factor = clamp(thermal_factor, 0.1, 2.0);
     self_density *= thermal_factor;
 
-    float buoyancy_threshold = self_density * (1.0 + PHASE_INTERFACE_THRESHOLD);
+    float denser_threshold = self_density * (1.0 + PHASE_INTERFACE_THRESHOLD);
+    float lighter_threshold = self_density * (1.0 - PHASE_INTERFACE_THRESHOLD);
 
-    // Count cardinal neighbors whose ambient density is significantly denser
-    // than our thermal-modulated self density. Accumulate their densities so
-    // we can compute an average ambient for the Archimedes formula.
+    // Count cardinal neighbors split by relative density:
+    //   denser_count/sum  — for the Archimedes RISE branch
+    //   lighter_count/sum — for the Atwood-scaled SINK branch (liquid only)
+    // The SINK bucket rejects ambients below SINK_AMBIENT_FLOOR so a water
+    // particle at the pool surface doesn't count its air cardinals.
     int denser_count = 0;
     float denser_sum = 0.0;
+    int lighter_count = 0;
+    float lighter_sum = 0.0;
 
     if (cx - 1 >= 0) {
         float d = ambient_density.data[cy * w + (cx - 1)];
-        if (d > buoyancy_threshold) {
+        if (d > denser_threshold) {
             denser_count++;
             denser_sum += d;
+        } else if (d < lighter_threshold && d >= SINK_AMBIENT_FLOOR) {
+            lighter_count++;
+            lighter_sum += d;
         }
     }
     if (cx + 1 < w) {
         float d = ambient_density.data[cy * w + (cx + 1)];
-        if (d > buoyancy_threshold) {
+        if (d > denser_threshold) {
             denser_count++;
             denser_sum += d;
+        } else if (d < lighter_threshold && d >= SINK_AMBIENT_FLOOR) {
+            lighter_count++;
+            lighter_sum += d;
         }
     }
     if (cy - 1 >= 0) {
         float d = ambient_density.data[(cy - 1) * w + cx];
-        if (d > buoyancy_threshold) {
+        if (d > denser_threshold) {
             denser_count++;
             denser_sum += d;
+        } else if (d < lighter_threshold && d >= SINK_AMBIENT_FLOOR) {
+            lighter_count++;
+            lighter_sum += d;
         }
     }
     if (cy + 1 < h) {
         float d = ambient_density.data[(cy + 1) * w + cx];
-        if (d > buoyancy_threshold) {
+        if (d > denser_threshold) {
             denser_count++;
             denser_sum += d;
+        } else if (d < lighter_threshold && d >= SINK_AMBIENT_FLOOR) {
+            lighter_count++;
+            lighter_sum += d;
         }
     }
 
     float effective_g = GRAVITY;
-    if (denser_count >= 2 && self_density > 0.0001) {
-        // "Mostly submerged" — apply Archimedes using the denser cells as
-        // the ambient fluid we're displacing.
+    if (denser_count >= MIN_DENSER_NEIGHBORS && self_density > 0.0001) {
+        // RISE: "Mostly submerged in denser" — Archimedes with the denser
+        // cells as ambient. Formula  g·(1 − ρ_a/ρ_s)  is negative when
+        // ρ_a > ρ_s so the particle accelerates upward.
         float ambient = denser_sum / float(denser_count);
         effective_g = GRAVITY * (1.0 - ambient / self_density);
-        // Clamp extreme rises. Gas-in-water gives -1666g; -3g still looks
+        // Clamp extreme rises. Gas-in-water gives −1666g; −3g still looks
         // visually dramatic without blowing the integration step.
         effective_g = max(effective_g, -3.0 * GRAVITY);
+    } else if (lighter_count >= MIN_DENSER_NEIGHBORS && self_density > 0.0001) {
+        // SINK: "Mostly embedded in lighter liquid" — Atwood-scaled boost
+        // to break the Rayleigh-Taylor meta-stable equilibrium that the
+        // variable-density Jacobi would otherwise settle into. See the
+        // comment block above for the math and rationale.
+        float ambient = lighter_sum / float(lighter_count);
+        float atwood = (self_density - ambient) / (self_density + ambient);
+        effective_g = GRAVITY * (1.0 + SINK_BOOST_K * atwood);
     }
-    // else: not enough denser cells around us — gravity only
+    // else: neither branch triggers — plain gravity.
     p.vel.y += effective_g * params.delta_time;
 
     // Density-and-speed-conditional drag. Drag only applies if the particle

@@ -63,6 +63,15 @@ layout(set = 0, binding = 8, std430) restrict buffer Substance2 {
     int data[];
 } substance2;
 
+layout(set = 0, binding = 9, std430) restrict buffer SubstanceProperties {
+    // vec4 per substance id. .z = density, used for cell_mass accumulation.
+    vec4 data[];
+} substance_props;
+
+layout(set = 0, binding = 10, std430) restrict buffer CellMass {
+    float data[];
+} cell_mass;
+
 void main() {
     uint pi = gl_GlobalInvocationID.x;
     if (pi >= uint(params.particle_count)) return;
@@ -174,6 +183,21 @@ void main() {
         cy = clamp(cy, 0, h - 1);
         uint cell_idx = uint(cy * w + cx);
         atomicAdd(density.data[cell_idx], 1u);
+
+        // Accumulate this particle's mass (substance density) into cell_mass.
+        // compute_cell_density divides this by the raw particle count to get
+        // a mass-weighted average density for the variable-density pressure
+        // solve. Non-racy: atomicAdd on float is well-defined, every particle
+        // in the cell contributes exactly once, so a cell with 8 water + 1
+        // mercury ends up with mass (8*1 + 1*13.5) = 21.5 and count 9, giving
+        // average density 2.39 — NOT 13.5 even if mercury wins the racy
+        // substance-id write. This kills the "racy substance → flickering
+        // cell density → pressure jitter" feedback loop.
+        float rho = 0.0;
+        if (p.substance_id > 0) {
+            rho = substance_props.data[p.substance_id].z;
+        }
+        atomicAdd(cell_mass.data[cell_idx], rho);
 
         int my_id = p.substance_id;
         int existing = substance.data[cell_idx];

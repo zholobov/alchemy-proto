@@ -42,6 +42,10 @@ layout(set = 0, binding = 7, std430) restrict buffer Substance2 {
     int data[];
 } substance2;  // secondary substance if cell is mixed (racy, visual only)
 
+layout(set = 0, binding = 8, std430) restrict buffer CellMass {
+    float data[];
+} cell_mass;  // atomic-add accumulator of per-particle substance density
+
 void main() {
     int x = int(gl_GlobalInvocationID.x);
     int y = int(gl_GlobalInvocationID.y);
@@ -63,5 +67,6 @@ void main() {
         density.data[y * w + x] = 0u;
         substance.data[y * w + x] = 0;
         substance2.data[y * w + x] = 0;
+        cell_mass.data[y * w + x] = 0.0;
     }
 }
