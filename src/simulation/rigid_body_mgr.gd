@@ -239,27 +239,35 @@ func apply_liquid_forces(
 		# The body displaces water from nearby cells, so we can't sample
 		# the body's bbox for surface/density — it's disrupted. Instead,
 		# scan a reference column FAR from the body to find the undisturbed
-		# fluid surface Y and density. In our oval receptacle with a
-		# uniform water level, any column away from the body gives a good
-		# measurement. If the body is near the center, use a side column.
-		var ref_cx := grid_width / 2
-		if ref_cx >= cx_min - 5 and ref_cx <= cx_max + 5:
-			ref_cx = 10  # body overlaps center — use left side
+		# fluid surface Y and density. Try multiple candidates because the
+		# oval receptacle narrows at the edges — some columns may be walls.
+		var ref_candidates: Array[int] = []
+		# Prefer columns well inside the oval: 1/4 and 3/4 of grid width,
+		# then center, then edges. Skip any that overlap the body's bbox.
+		for c in [grid_width / 4, grid_width * 3 / 4, grid_width / 2, 30, grid_width - 30]:
+			if c < cx_min - 5 or c > cx_max + 5:
+				ref_candidates.append(c)
+		# If ALL candidates overlap the body (huge body or bad luck), just
+		# use the first candidate anyway — some data is better than none.
+		if ref_candidates.is_empty():
+			ref_candidates.append(grid_width / 4)
 
 		var fluid_density := 0.0
 		var surface_py := float(grid_height) * cell_size_px  # default: no water
 
-		for ry in range(grid_height):
-			var ridx := ry * grid_width + ref_cx
-			if liquid_readback.densities[ridx] > 0.15:
-				surface_py = float(ry) * cell_size_px
-				# Read fluid density from the first liquid cell found.
-				var marker: int = liquid_readback.markers[ridx]
-				if marker > 0:
-					var lsub := SubstanceRegistry.get_substance(marker)
-					if lsub:
-						fluid_density = lsub.density
-				break  # topmost liquid row = surface
+		for ref_cx in ref_candidates:
+			for ry in range(grid_height):
+				var ridx := ry * grid_width + ref_cx
+				if liquid_readback.densities[ridx] > 0.15:
+					surface_py = float(ry) * cell_size_px
+					var marker: int = liquid_readback.markers[ridx]
+					if marker > 0:
+						var lsub := SubstanceRegistry.get_substance(marker)
+						if lsub:
+							fluid_density = lsub.density
+					break
+			if fluid_density > 0.0:
+				break  # found liquid at this column — done
 
 		# --- Count body cells below the fluid surface ---
 		var total_mass := 0.0
@@ -300,7 +308,7 @@ func apply_liquid_forces(
 		# and no overshoot/divergence from stale velocity values.
 		body.constant_force = Vector2(0, net_y)
 
-		if debug_buoyancy and Engine.get_process_frames() % 30 == 0:
+		if debug_buoyancy and Engine.get_process_frames() % 60 == 0:
 			print("[BUOY] %s: Y=%.0f vel=%.0f sub=%d surf=%.0f dens=%.2f buoy=%.0f grav=%.0f net=%.0f mass=%.2f" % [
 				body.get_meta("substance_name", "?"),
 				body.global_position.y, body.linear_velocity.y,
