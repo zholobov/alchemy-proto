@@ -16,6 +16,7 @@ compatibility/default_parent_skeleton_in_mesh_instance_3d=true
 
 config/name="Alchemy Prototype"
 run/main_scene="res://src/main.tscn"
+run/main_scene.web="res://spike/blocky_probe.tscn"
 config/features=PackedStringArray("4.6", "Forward Plus")
 
 [autoload]

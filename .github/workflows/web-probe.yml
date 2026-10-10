@@ -1,0 +1,90 @@
+name: Web Probe
+
+# Publishes the blocky-grid spike probe as a GitHub Pages site so a
+# playtester can open it on a phone: https://zholobov.github.io/alchemy-proto/
+# Same mechanism as gd-experiment-tetrorpg (peaceiris -> gh-pages branch),
+# minus the external repo since this repo is public.
+
+on:
+  push:
+    branches: [experiment/blocky-grid]
+  workflow_dispatch:
+
+env:
+  GODOT_VERSION: 4.6.2-stable
+
+permissions:
+  contents: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: true
+
+jobs:
+  build-and-publish:
+    name: Export Web and publish to gh-pages
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Cache Godot binary and export templates
+        id: cache-godot
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/godot-bin
+            ~/.local/share/godot/export_templates
+          key: godot-${{ env.GODOT_VERSION }}-v1
+
+      - name: Install Godot
+        if: steps.cache-godot.outputs.cache-hit != 'true'
+        env:
+          GODOT_VERSION: ${{ env.GODOT_VERSION }}
+        run: |
+          set -euo pipefail
+          mkdir -p "$HOME/godot-bin"
+          wget -q -O /tmp/godot.zip \
+            "https://github.com/godotengine/godot/releases/download/${GODOT_VERSION}/Godot_v${GODOT_VERSION}_linux.x86_64.zip"
+          unzip -q /tmp/godot.zip -d /tmp/godot-extract
+          mv "/tmp/godot-extract/Godot_v${GODOT_VERSION}_linux.x86_64" "$HOME/godot-bin/godot"
+          chmod +x "$HOME/godot-bin/godot"
+
+      - name: Install export templates
+        if: steps.cache-godot.outputs.cache-hit != 'true'
+        env:
+          GODOT_VERSION: ${{ env.GODOT_VERSION }}
+        run: |
+          set -euo pipefail
+          TEMPLATE_SUBDIR="${GODOT_VERSION%-stable}.stable"
+          TEMPLATE_DIR="$HOME/.local/share/godot/export_templates/${TEMPLATE_SUBDIR}"
+          mkdir -p "$TEMPLATE_DIR"
+          wget -q -O /tmp/templates.tpz \
+            "https://github.com/godotengine/godot/releases/download/${GODOT_VERSION}/Godot_v${GODOT_VERSION}_export_templates.tpz"
+          unzip -q /tmp/templates.tpz -d /tmp/templates-extract
+          mv /tmp/templates-extract/templates/* "$TEMPLATE_DIR/"
+
+      - name: Add Godot to PATH
+        run: echo "$HOME/godot-bin" >> "$GITHUB_PATH"
+
+      - name: Import project
+        run: |
+          godot --headless --import || true
+
+      - name: Export Web (release)
+        run: |
+          set -euo pipefail
+          mkdir -p build/web
+          godot --headless --export-release "Web" build/web/index.html
+          test -f build/web/index.html
+          echo "${GITHUB_SHA::7} $(date -u '+%Y-%m-%d %H:%M UTC')" > build/web/version.txt
+          ls -la build/web
+
+      - name: Publish to gh-pages
+        uses: peaceiris/actions-gh-pages@v4
+        with:
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          publish_branch: gh-pages
+          publish_dir: build/web
+          force_orphan: true
+          commit_message: "Deploy probe ${{ github.sha }}"
