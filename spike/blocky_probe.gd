@@ -98,8 +98,7 @@ var burner_cells := PackedInt32Array()
 
 # --- tools and derived state ---
 var lid_closed := false
-var burner_on := true
-var opt_skip_air := true
+var burner_on := false
 var paused := false
 var size_idx := 0
 var rate_idx := 1
@@ -133,7 +132,6 @@ var _pixels := PackedByteArray()
 var _stats: Label
 var _btn_size: Button
 var _btn_rate: Button
-var _btn_opt: Button
 var _btn_lid: Button
 var _btn_burner: Button
 var _btn_pause: Button
@@ -158,8 +156,6 @@ func _ready() -> void:
 			size_idx = clampi(int(kv[1]), 0, SIZES.size() - 1)
 		elif kv[0] == "rate":
 			rate_idx = clampi(int(kv[1]), 0, TICK_RATES.size() - 1)
-		elif kv[0] == "opt":
-			opt_skip_air = int(kv[1]) != 0
 	_build_substances()
 	_build_reactions()
 	_build_ui()
@@ -187,7 +183,7 @@ func _build_substances() -> void:
 	_def(STEAM, "Steam", PH_GAS, 0.0006, 0.02, 2.0, Color(0.85, 0.85, 0.95))
 	_def(CO2, "CO2", PH_GAS, 0.002, 0.02, 0.8, Color(0.45, 0.35, 0.3))
 	_def(STONE, "Stone", PH_SOLID, 2.6, 0.3, 0.8, Color(0.5, 0.47, 0.45))
-	_def(WOOD, "Wood", PH_SOLID, 0.65, 0.05, 1.7, Color(0.5, 0.32, 0.15))
+	_def(WOOD, "Wood", PH_SOLID, 0.65, 0.2, 1.7, Color(0.5, 0.32, 0.15))
 	_def(ASH, "Ash", PH_POWDER, 0.5, 0.05, 0.8, Color(0.3, 0.3, 0.3))
 	_def(GLOW, "Glow", PH_SOLID, 2.0, 0.2, 0.8, Color(0.6, 1.0, 0.8))
 
@@ -626,7 +622,6 @@ func _pass_temp() -> void:
 	var kc := sub_cond
 	var hc := sub_heatcap
 	var lat := latent
-	var skip := opt_skip_air
 	var open_top := not lid_closed
 	for y in range(h):
 		var row := y * w
@@ -637,15 +632,6 @@ func _pass_temp() -> void:
 				continue
 			var s: int = c[i]
 			var t: float = tp[i]
-			if skip and s == 0 and absf(t - AMBIENT) < 0.25:
-				# Quiet air: skip unless the right or down neighbour is warm.
-				var quiet := true
-				if x < w - 1 and absf(tp[i + 1] - AMBIENT) >= 0.25:
-					quiet = false
-				elif not last_row and absf(tp[i + w] - AMBIENT) >= 0.25:
-					quiet = false
-				if quiet:
-					continue
 			var k: float = kc[s]
 			var cap: float = hc[s]
 			# Exchange with right and down neighbours only: every pair once.
@@ -1035,9 +1021,6 @@ func _build_ui() -> void:
 		rate_idx = (rate_idx + 1) % TICK_RATES.size()
 		_tick_samples.clear()
 		_refresh_buttons())
-	_btn_opt = _button(col_a, "Opt", func() -> void:
-		opt_skip_air = not opt_skip_air
-		_refresh_buttons())
 	_btn_pause = _button(col_a, "Pause", func() -> void:
 		paused = not paused
 		_refresh_buttons())
@@ -1065,7 +1048,6 @@ func _refresh_buttons() -> void:
 	_btn_size.text = "Size: %dx%d" % [gw, gh]
 	var rate: float = TICK_RATES[rate_idx]
 	_btn_rate.text = "Tick: every frame" if rate <= 0.0 else "Tick: %d Hz" % int(rate)
-	_btn_opt.text = "Skip quiet air: %s" % ("on" if opt_skip_air else "off")
 	_btn_pause.text = "Resume" if paused else "Pause"
 	_btn_lid.text = "Lid: %s" % ("closed" if lid_closed else "open")
 	_btn_burner.text = "Burner: %s" % ("on" if burner_on else "off")
